@@ -2,7 +2,7 @@ from scoring import score_sequence
 
 
 def test_balanced_short_sequence_is_feasible():
-    result = score_sequence("ACGTACGTACGTACGTACGT")
+    result = score_sequence("ACGTTGCATGACGTACGCTA")
     assert result["feasible"] is True
     assert result["score"] > 0.7
     assert result["reasons"] == []
