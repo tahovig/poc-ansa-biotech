@@ -953,6 +953,11 @@ correct here; see the ledger's Ruling entry for Task 5.
             <name>Anypoint Exchange</name>
             <url>https://maven.anypoint.mulesoft.com/api/v3/maven</url>
         </repository>
+        <repository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <url>https://repository.mulesoft.org/releases/</url>
+        </repository>
     </repositories>
     <pluginRepositories>
         <pluginRepository>
@@ -963,6 +968,16 @@ correct here; see the ledger's Ruling entry for Task 5.
     </pluginRepositories>
 </project>
 ```
+
+**Note (fixed during Task 5 execution):** `mulesoft-releases` was only
+listed under `<pluginRepositories>`, which governs Maven *plugin*
+resolution only. The embedded Mule Community Edition runtime BOM
+(`com.mulesoft.mule.distributions:mule-runtime-impl-no-services-bom`),
+needed by MUnit to actually spin up a container to run tests against, is a
+regular dependency-graph artifact, resolved via `<repositories>` — and it
+isn't published to Maven Central, so without this entry `mvn test` fails
+trying (and failing) to find it there. Added `mulesoft-releases` to both
+sections above.
 
 **Note:** connector version numbers above are best-known-good as of this plan's writing; if `mvn` dependency resolution fails, run `mvn versions:display-dependency-updates` and bump to the latest available in Anypoint Exchange — this is exactly what Step 5's build/verify step is for.
 
