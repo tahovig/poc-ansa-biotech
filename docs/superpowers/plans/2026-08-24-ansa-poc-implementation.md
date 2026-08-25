@@ -1211,7 +1211,9 @@ output application/json
     </flow>
 
     <flow name="sf-update-order-flow">
-        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH"/>
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+        </http:listener>
         <set-variable variableName="requestBody" value="#[payload]"/>
 
         <flow-ref name="get-sfdc-access-token-flow"/>
@@ -1302,7 +1304,9 @@ payload.records map (order) -> {
     </flow>
 
     <flow name="sf-get-order-by-batch-flow">
-        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET"/>
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+        </http:listener>
 
         <flow-ref name="get-sfdc-access-token-flow"/>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
@@ -1763,6 +1767,9 @@ Expected: FAIL — no flow named `process-order-flow`.
         http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
     <flow name="process-order-flow">
+        <http:listener config-ref="Process_API_Listener_Config" path="/orders" allowedMethods="POST">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+        </http:listener>
         <error-handler>
             <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY">
                 <set-variable variableName="httpStatus" value="502"/>
@@ -2203,7 +2210,9 @@ Expected: FAIL — no flow named `experience-submit-order-flow`.
         http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
     <flow name="experience-submit-order-flow">
-        <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="POST"/>
+        <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="POST">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+        </http:listener>
         <choice>
             <when expression="#[not (isEmpty(payload.sequence default '')) and (payload.sequence matches /^[ACGTN]+$/)]">
                 <http:request config-ref="Process_API_Request_Config" method="POST" path="/orders">
