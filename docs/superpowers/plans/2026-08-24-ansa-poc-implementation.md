@@ -6,7 +6,17 @@
 
 **Architecture:** Three Mule API tiers (Experience / Process / System) front a real Salesforce Developer org as system of record. Two Python services — a sequence-feasibility scorer and an instrument-telemetry simulator — talk to Mule over HTTP and to each other over an ActiveMQ broker (Mule via JMS/OpenWire, Python via STOMP, same broker/destinations). A static HTML/JS dashboard polls the Experience API.
 
-**Tech Stack:** Mule 4.x (Community Edition, standalone), Salesforce Connector (OAuth User-Password), Mule JMS Connector, ActiveMQ, Python 3.11 (Flask, pytest, stomp.py), Salesforce CLI (`sf`), Docker / Docker Compose, vanilla HTML/JS/CSS dashboard (no build step).
+**Tech Stack:** Mule 4.x (Community Edition, standalone), Salesforce REST API via `http:request` + OAuth 2.0 JWT Bearer (see note below — not the packaged Salesforce Connector, which is Enterprise-only), Mule JMS Connector, Mule Java module (JWT signing, pure JDK), ActiveMQ, Python 3.11 (Flask, pytest, stomp.py), Salesforce CLI (`sf`), Docker / Docker Compose, vanilla HTML/JS/CSS dashboard (no build step).
+
+**Note (fixed during Task 5 execution):** the plan originally specified
+MuleSoft's packaged Salesforce Connector. That connector's own bundled
+descriptor requires `MULE_EE` unconditionally (verified by inspecting its
+`META-INF/mule-artifact/mule-artifact.json` — not fixable via
+`mule-artifact.json` in this project), which needs a licensed Anypoint
+account — directly contradicting this plan's Community-Edition/no-Anypoint
+constraint. Replaced with plain `http:request` calls to Salesforce's REST
+API, authenticated with the same JWT Bearer flow from Task 2. User approved
+this pivot. See the ledger's Ruling entry for full detail.
 
 **Spec:** `docs/superpowers/specs/2026-08-24-ansa-poc-design.md`
 
@@ -73,6 +83,9 @@ poc-ansa-biotech/
 │   │   ├── feasibility-system-api.xml
 │   │   ├── process-api.xml
 │   │   └── experience-api.xml
+│   ├── src/main/java/com/poc/ansa/
+│   │   └── JwtSigner.java      (Task 5 — JWT-signing helper, since the packaged
+│   │                              Salesforce Connector requires EE; see Task 5)
 │   ├── src/main/resources/
 │   │   ├── log4j2.xml
 │   │   └── keys/              (gitignored: sfdc-jwt.key, sfdc-jwt.crt, sfdc-jwt.p12 — Task 2)
@@ -403,6 +416,7 @@ salesforce/.sf/
 SFDC_CONSUMER_KEY=
 SFDC_USERNAME=
 SFDC_TOKEN_URL=https://orgfarm-46688fa9f2-dev-ed.develop.my.salesforce.com/services/oauth2/token
+SFDC_INSTANCE_HOST=orgfarm-46688fa9f2-dev-ed.develop.my.salesforce.com
 SFDC_JWT_AUDIENCE=https://login.salesforce.com
 SFDC_JWT_KEYSTORE_PATH=keys/sfdc-jwt.p12
 SFDC_JWT_KEYSTORE_PASSWORD=changeit
@@ -817,11 +831,13 @@ git commit -m "Add ActiveMQ Artemis to docker-compose"
 - Create: `mule-app/src/main/resources/log4j2.xml`
 - Create: `mule-app/src/main/mule/global-config.xml`
 - Create: `mule-app/src/main/mule/salesforce-system-api.xml`
+- Create: `mule-app/src/main/java/com/poc/ansa/JwtSigner.java` (JWT-signing helper, added when the packaged Salesforce Connector turned out to require EE — see below)
+- Modify: `.env.example`, `.env` (add `SFDC_INSTANCE_HOST`, needed by the REST-based Salesforce config)
 - Test: `mule-app/src/test/munit/salesforce-system-api-test-suite.xml`
 
 **Interfaces:**
 - Produces: Salesforce System API on port `${SF_SYSTEM_API_PORT}` (default 8082):
-  - `POST /synthesis-orders` — body `{name, accountId, sequence, lengthBp, status, feasibilityScore, rejectionReason, promisedShipDate, batchId}` → creates a `Synthesis_Order__c`, returns `{id, batchId}`.
+  - `POST /synthesis-orders` — body `{name, accountId, sequence, lengthBp, status, feasibilityScore, rejectionReason, promisedShipDate, batchId}` → creates a `Synthesis_Order__c`, returns `{id}`.
   - `PATCH /synthesis-orders/{batchId}` — body is a partial set of the same fields → updates the record matched by `Batch_Id__c`.
   - `GET /synthesis-orders` — returns all orders as JSON array `[{id, name, status, feasibilityScore, progressPct, batchId, promisedShipDate}, ...]`.
   - `GET /synthesis-orders/{batchId}` — returns one order by `Batch_Id__c`, 404 if not found.
@@ -874,12 +890,6 @@ correct here; see the ledger's Ruling entry for Task 5.
         </dependency>
         <dependency>
             <groupId>org.mule.connectors</groupId>
-            <artifactId>mule-salesforce-connector</artifactId>
-            <version>10.20.0</version>
-            <classifier>mule-plugin</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.mule.connectors</groupId>
             <artifactId>mule-jms-connector</artifactId>
             <version>1.9.2</version>
             <classifier>mule-plugin</classifier>
@@ -888,6 +898,12 @@ correct here; see the ledger's Ruling entry for Task 5.
             <groupId>org.apache.activemq</groupId>
             <artifactId>artemis-jms-client-all</artifactId>
             <version>2.37.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.modules</groupId>
+            <artifactId>mule-java-module</artifactId>
+            <version>1.2.19</version>
+            <classifier>mule-plugin</classifier>
         </dependency>
         <dependency>
             <groupId>com.mulesoft.munit</groupId>
@@ -913,6 +929,21 @@ correct here; see the ledger's Ruling entry for Task 5.
                 <version>4.2.0</version>
                 <extensions>true</extensions>
             </plugin>
+            <plugin>
+                <groupId>com.mulesoft.munit.tools</groupId>
+                <artifactId>munit-maven-plugin</artifactId>
+                <version>${munit.version}</version>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                            <goal>coverage-report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -934,6 +965,14 @@ correct here; see the ledger's Ruling entry for Task 5.
 ```
 
 **Note:** connector version numbers above are best-known-good as of this plan's writing; if `mvn` dependency resolution fails, run `mvn versions:display-dependency-updates` and bump to the latest available in Anypoint Exchange — this is exactly what Step 5's build/verify step is for.
+
+**Note (fixed during Task 5 execution):** the original pom.xml was missing
+the `munit-maven-plugin` execution binding entirely — without it, `mvn test`
+silently runs zero MUnit tests instead of failing loudly, which would have
+masked real problems. Added above. The Salesforce connector dependency is
+gone (see the Tech Stack note); `mule-java-module` is added instead, needed
+for the JWT-signing `java:invoke` call in the rewritten
+`salesforce-system-api.xml`.
 
 - [ ] **Step 3: Write minimal `log4j2.xml`**
 
@@ -959,13 +998,11 @@ correct here; see the ledger's Ruling entry for Task 5.
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
-      xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
       xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
         http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-        http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
         http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
 
     <http:listener-config name="SF_System_API_Listener_Config">
@@ -997,27 +1034,20 @@ correct here; see the ledger's Ruling entry for Task 5.
     </http:request-config>
 
     <!--
-      JWT Bearer flow, not Username-Password: this org blocks the legacy
-      OAuth Username-Password flow and SOAP login() by default (Salesforce
-      policy for orgs created Summer '23+), discovered while executing
-      Task 2. See Task 2's revised text for how the keystore, certificate,
-      and Permission Set pre-authorization were set up. Exact attribute
-      names for the JWT connection type should be verified against the
-      installed Salesforce Connector version's docs/XSD when this flow is
-      first built — same caveat as the connector version note in Task 5's
-      pom.xml step.
+      Salesforce REST API, not the packaged Salesforce Connector (that
+      connector requires MULE_EE unconditionally per its own bundled
+      descriptor, incompatible with this project's Community Edition/
+      no-Anypoint-account constraint — discovered and fixed while executing
+      Task 5). Auth is OAuth 2.0 JWT Bearer, same flow verified working in
+      Task 2, but the token exchange now happens via a plain http:request
+      inside salesforce-system-api.xml's get-sfdc-access-token-flow rather
+      than a connector-managed connection. One shared request-config
+      serves both the token endpoint and the data REST endpoints since
+      they're the same host (the org's My Domain instance URL).
     -->
-    <salesforce:sfdc-config name="Salesforce_Config">
-        <salesforce:oauth-jwt-flow-connection
-            consumerKey="${sfdc.consumer.key}"
-            username="${sfdc.username}"
-            keyStore="${sfdc.jwt.keystore.path}"
-            storePassword="${sfdc.jwt.keystore.password}"
-            certificateAlias="${sfdc.jwt.key.alias}"
-            keyPassword="${sfdc.jwt.keystore.password}"
-            audience="${sfdc.jwt.audience}"
-            tokenUrl="${sfdc.token.url}" />
-    </salesforce:sfdc-config>
+    <http:request-config name="SFDC_Request_Config">
+        <http:request-connection host="${sfdc.instance.host}" port="443" protocol="HTTPS" />
+    </http:request-config>
 
     <jms:config name="JMS_Config">
         <jms:active-mq-connection>
@@ -1028,27 +1058,108 @@ correct here; see the ledger's Ruling entry for Task 5.
 </mule>
 ```
 
-- [ ] **Step 5: Write `salesforce-system-api.xml`**
+- [ ] **Step 5: Write `JwtSigner.java` and the rewritten `salesforce-system-api.xml`**
+
+**Revised during execution — see the Tech Stack note above.** This step
+originally used `salesforce:create`/`query`/`update` operations against
+`Salesforce_Config`. It now uses plain `http:request` calls to Salesforce's
+REST API, with a small Java helper doing the JWT-signing math (pure JDK —
+`java.security.Signature` with `SHA256withRSA` — no third-party JWT
+library needed) since Mule Community Edition has no built-in RS256 signing.
+
+`mule-app/src/main/java/com/poc/ansa/JwtSigner.java`:
+
+```java
+package com.poc.ansa;
+
+import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.Signature;
+import java.util.Base64;
+
+public class JwtSigner {
+
+    public static String sign(String consumerKey, String username, String audience,
+                               String keystorePath, String keystorePassword, String keyAlias) throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        try (FileInputStream fis = new FileInputStream(keystorePath)) {
+            keyStore.load(fis, keystorePassword.toCharArray());
+        }
+        PrivateKey privateKey = (PrivateKey) keyStore.getKey(keyAlias, keystorePassword.toCharArray());
+
+        long exp = (System.currentTimeMillis() / 1000L) + 300L;
+        String header = "{\"alg\":\"RS256\"}";
+        String claims = String.format(
+            "{\"iss\":\"%s\",\"sub\":\"%s\",\"aud\":\"%s\",\"exp\":%d}",
+            consumerKey, username, audience, exp);
+
+        Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
+        String headerEncoded = encoder.encodeToString(header.getBytes(StandardCharsets.UTF_8));
+        String claimsEncoded = encoder.encodeToString(claims.getBytes(StandardCharsets.UTF_8));
+        String signingInput = headerEncoded + "." + claimsEncoded;
+
+        Signature signature = Signature.getInstance("SHA256withRSA");
+        signature.initSign(privateKey);
+        signature.update(signingInput.getBytes(StandardCharsets.UTF_8));
+        byte[] signed = signature.sign();
+        String signatureEncoded = encoder.encodeToString(signed);
+
+        return signingInput + "." + signatureEncoded;
+    }
+}
+```
+
+This mirrors the already-verified-working logic from Task 2's Python
+verification script (same claims shape, same RS256 signing over the same
+keystore) — if this Java version and the Python version ever disagree,
+trust the Python one (it's the one independently verified against the
+real org in Task 2) and fix the Java to match.
+
+`mule-app/src/main/mule/salesforce-system-api.xml`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
-      xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+      xmlns:java="http://www.mulesoft.org/schema/mule/java"
       xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
         http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-        http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+        http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd
         http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <sub-flow name="get-sfdc-access-token-flow">
+        <java:invoke class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
+            <java:args><![CDATA[#[{
+                arg0: p('sfdc.consumer.key'),
+                arg1: p('sfdc.username'),
+                arg2: p('sfdc.jwt.audience'),
+                arg3: p('sfdc.jwt.keystore.path'),
+                arg4: p('sfdc.jwt.keystore.password'),
+                arg5: p('sfdc.jwt.key.alias')
+            }]]]></java:args>
+        </java:invoke>
+        <set-variable variableName="jwtAssertion" value="#[payload]"/>
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
+            <http:body><![CDATA[#[output application/x-www-form-urlencoded
+---
+{
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: vars.jwtAssertion
+}]]]></http:body>
+        </http:request>
+    </sub-flow>
 
     <flow name="sf-create-order-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="POST"/>
         <ee:transform>
             <ee:message>
                 <ee:set-payload><![CDATA[%dw 2.0
-output application/java
+output application/json
 ---
 {
     Name: payload.name,
@@ -1063,15 +1174,22 @@ output application/java
 }]]></ee:set-payload>
             </ee:message>
         </ee:transform>
-        <salesforce:create config-ref="Salesforce_Config" type="Synthesis_Order__c">
-            <salesforce:records><![CDATA[#[[payload]]]]></salesforce:records>
-        </salesforce:create>
+        <set-variable variableName="recordPayload" value="#[payload]"/>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/data/v60.0/sobjects/Synthesis_Order__c">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+            <http:body><![CDATA[#[output application/json --- vars.recordPayload]]]></http:body>
+        </http:request>
+
         <ee:transform>
             <ee:message>
                 <ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
-{ id: payload[0].id }]]></ee:set-payload>
+{ id: payload.id }]]></ee:set-payload>
             </ee:message>
         </ee:transform>
     </flow>
@@ -1079,25 +1197,38 @@ output application/json
     <flow name="sf-update-order-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH"/>
         <set-variable variableName="requestBody" value="#[payload]"/>
-        <salesforce:query config-ref="Salesforce_Config">
-            <salesforce:salesforce-query><![CDATA[SELECT Id FROM Synthesis_Order__c WHERE Batch_Id__c = ':batchId']]></salesforce:salesforce-query>
-            <salesforce:parameters><![CDATA[#[{ 'batchId': attributes.uriParams.batchId }]]]></salesforce:parameters>
-        </salesforce:query>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ attributes.uriParams.batchId ++ "'"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
         <choice>
-            <when expression="#[sizeOf(payload) == 0]">
+            <when expression="#[sizeOf(payload.records) == 0]">
                 <set-variable variableName="httpStatus" value="404"/>
                 <set-payload value='#[output application/json --- { error: "order not found for batchId " ++ attributes.uriParams.batchId }]'/>
             </when>
             <otherwise>
-                <set-variable variableName="recordId" value="#[payload[0].Id]"/>
+                <set-variable variableName="recordId" value="#[payload.records[0].Id]"/>
                 <ee:transform>
                     <ee:message>
                         <ee:set-payload><![CDATA[%dw 2.0
-output application/java
+output application/json
 var body = vars.requestBody
 ---
 {
-    Id: vars.recordId,
     (Status__c: body.status) if (body.status?),
     (Progress_Pct__c: body.progressPct) if (body.progressPct?),
     (Feasibility_Score__c: body.feasibilityScore) if (body.feasibilityScore?),
@@ -1105,9 +1236,12 @@ var body = vars.requestBody
 }]]></ee:set-payload>
                     </ee:message>
                 </ee:transform>
-                <salesforce:update config-ref="Salesforce_Config" type="Synthesis_Order__c">
-                    <salesforce:records><![CDATA[#[[payload]]]]></salesforce:records>
-                </salesforce:update>
+                <http:request config-ref="SFDC_Request_Config" method="PATCH" path="#['/services/data/v60.0/sobjects/Synthesis_Order__c/' ++ vars.recordId]">
+                    <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+                    <http:body><![CDATA[#[payload]]]></http:body>
+                </http:request>
+                <!-- Salesforce REST PATCH returns 204 No Content on success — don't
+                     try to read a body from it, just overwrite payload directly. -->
                 <set-payload value='#[output application/json --- { updated: true }]'/>
             </otherwise>
         </choice>
@@ -1115,15 +1249,30 @@ var body = vars.requestBody
 
     <flow name="sf-get-orders-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="GET"/>
-        <salesforce:query config-ref="Salesforce_Config">
-            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c ORDER BY CreatedDate DESC]]></salesforce:salesforce-query>
-        </salesforce:query>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c ORDER BY CreatedDate DESC"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
         <ee:transform>
             <ee:message>
                 <ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
-payload map (order) -> {
+payload.records map (order) -> {
     id: order.Id,
     name: order.Name,
     status: order.Status__c,
@@ -1138,12 +1287,26 @@ payload map (order) -> {
 
     <flow name="sf-get-order-by-batch-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET"/>
-        <salesforce:query config-ref="Salesforce_Config">
-            <salesforce:salesforce-query><![CDATA[SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = ':batchId']]></salesforce:salesforce-query>
-            <salesforce:parameters><![CDATA[#[{ 'batchId': attributes.uriParams.batchId }]]]></salesforce:parameters>
-        </salesforce:query>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ attributes.uriParams.batchId ++ "'"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
         <choice>
-            <when expression="#[sizeOf(payload) == 0]">
+            <when expression="#[sizeOf(payload.records) == 0]">
                 <set-variable variableName="httpStatus" value="404"/>
                 <set-payload value='#[output application/json --- { error: "not found" }]'/>
             </when>
@@ -1152,7 +1315,7 @@ payload map (order) -> {
                     <ee:message>
                         <ee:set-payload><![CDATA[%dw 2.0
 output application/json
-var order = payload[0]
+var order = payload.records[0]
 ---
 {
     id: order.Id,
@@ -1172,49 +1335,97 @@ var order = payload[0]
 </mule>
 ```
 
+The exact `java:invoke` XML shape (method signature string format,
+`java:args` structure) should be verified against the installed
+`mule-java-module` version's actual schema once built — same
+verify-against-installed-version caveat as the pom.xml note. Getting the
+MUnit tests green is the acceptance bar for this file, not matching this
+XML byte-for-byte.
+
 - [ ] **Step 6: Write the failing MUnit suite**
 
 `mule-app/src/test/munit/salesforce-system-api-test-suite.xml`:
+
+**Revised during execution — same reason as Step 5.** Every test now mocks
+`java:invoke` (the JWT signing call — return a canned assertion string, no
+real keystore needed in tests) and two distinct `http:request` calls
+distinguished by `path`: the token endpoint (`/services/oauth2/token`,
+always mocked the same way) and whichever Salesforce REST endpoint the
+flow under test calls.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
       xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
-      xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:java="http://www.mulesoft.org/schema/mule/java"
       xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
         http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
         http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
-        http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd">
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd">
 
     <munit:config name="salesforce-system-api-test-suite.xml"/>
 
-    <munit:test name="create-order-maps-fields-and-calls-salesforce-create" >
+    <munit:test name="create-order-maps-fields-and-calls-salesforce-rest-create">
         <munit:behavior>
-            <munit-tools:mock-when processor="salesforce:create">
+            <munit-tools:mock-when processor="java:invoke">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#['mock.jwt.assertion']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
                 <munit-tools:with-attributes>
-                    <munit-tools:with-attribute whereValue="Synthesis_Order__c" attributeName="type"/>
+                    <munit-tools:with-attribute whereValue="/services/oauth2/token" attributeName="path"/>
                 </munit-tools:with-attributes>
                 <munit-tools:then-return>
-                    <munit-tools:payload value="#[[{ id: '001XX', success: true }]]"/>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/sobjects/Synthesis_Order__c" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ id: "001XX", success: true }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
+            <set-event>
+                <munit-tools:payload value='#[output application/json --- { name: "ORD-1", accountId: "001AA", sequence: "ACGT", lengthBp: 4, status: "Feasible", feasibilityScore: 0.9, promisedShipDate: "2026-09-01", batchId: "batch-1" }]'/>
+            </set-event>
             <flow-ref name="sf-create-order-flow"/>
         </munit:execution>
         <munit:validation>
-            <munit-tools:verify-call processor="salesforce:create" times="1"/>
+            <munit-tools:assert-that expression="#[payload.id]" is="#[MunitTools::equalTo('001XX')]"/>
         </munit:validation>
     </munit:test>
 
     <munit:test name="get-orders-transforms-salesforce-records-to-json-shape">
         <munit:behavior>
-            <munit-tools:mock-when processor="salesforce:query">
+            <munit-tools:mock-when processor="java:invoke">
                 <munit-tools:then-return>
-                    <munit-tools:payload value='#[[{ Id: "001XX", Name: "ORD-1", Status__c: "Feasible", Feasibility_Score__c: 0.9, Progress_Pct__c: 0, Batch_Id__c: "batch-1", Promised_Ship_Date__c: "2026-09-01" }]]'/>
+                    <munit-tools:payload value="#['mock.jwt.assertion']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/oauth2/token" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [{ Id: "001XX", Name: "ORD-1", Status__c: "Feasible", Feasibility_Score__c: 0.9, Progress_Pct__c: 0, Batch_Id__c: "batch-1", Promised_Ship_Date__c: "2026-09-01" }] }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
         </munit:behavior>
@@ -1228,13 +1439,32 @@ var order = payload[0]
 
     <munit:test name="get-order-by-batch-returns-404-when-not-found">
         <munit:behavior>
-            <munit-tools:mock-when processor="salesforce:query">
+            <munit-tools:mock-when processor="java:invoke">
                 <munit-tools:then-return>
-                    <munit-tools:payload value="#[[]]"/>
+                    <munit-tools:payload value="#['mock.jwt.assertion']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/oauth2/token" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [] }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
+            <set-event>
+                <munit-tools:attributes value='#[{ uriParams: { batchId: "unknown-batch" } }]'/>
+            </set-event>
             <flow-ref name="sf-get-order-by-batch-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1244,6 +1474,11 @@ var order = payload[0]
 
 </mule>
 ```
+
+The `get-order-by-batch` test needs `attributes.uriParams.batchId` set via
+`set-event` since the flow reads it directly (there's no real HTTP listener
+in a MUnit `flow-ref` execution) — the value doesn't matter since the mock
+always returns zero records regardless of what SOQL was built from it.
 
 - [ ] **Step 7: Run MUnit to verify failures, then implementation, then pass**
 
@@ -2377,7 +2612,7 @@ exec /opt/mule/bin/mule \
   -M-Dprocess.api.host="${PROCESS_API_HOST}" \
   -M-Dsfdc.consumer.key="${SFDC_CONSUMER_KEY}" \
   -M-Dsfdc.username="${SFDC_USERNAME}" \
-  -M-Dsfdc.token.url="${SFDC_TOKEN_URL}" \
+  -M-Dsfdc.instance.host="${SFDC_INSTANCE_HOST}" \
   -M-Dsfdc.jwt.audience="${SFDC_JWT_AUDIENCE}" \
   -M-Dsfdc.jwt.keystore.path="${SFDC_JWT_KEYSTORE_PATH}" \
   -M-Dsfdc.jwt.keystore.password="${SFDC_JWT_KEYSTORE_PASSWORD}" \
