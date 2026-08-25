@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:java="http://www.mulesoft.org/schema/mule/java"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <sub-flow name="get-sfdc-access-token-flow">
+        <java:invoke-static class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
+            <java:args><![CDATA[#[{
+                arg0: p('sfdc.consumer.key'),
+                arg1: p('sfdc.username'),
+                arg2: p('sfdc.jwt.audience'),
+                arg3: p('sfdc.jwt.keystore.path'),
+                arg4: p('sfdc.jwt.keystore.password'),
+                arg5: p('sfdc.jwt.key.alias')
+            }]]]></java:args>
+        </java:invoke-static>
+        <set-variable variableName="jwtAssertion" value="#[payload]"/>
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
+            <http:body><![CDATA[#[output application/x-www-form-urlencoded
+---
+{
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: vars.jwtAssertion
+}]]]></http:body>
+        </http:request>
+    </sub-flow>
+
+    <flow name="sf-create-order-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="POST"/>
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    Name: payload.name,
+    Account__c: payload.accountId,
+    Sequence__c: payload.sequence,
+    Length_bp__c: payload.lengthBp,
+    Status__c: payload.status,
+    Feasibility_Score__c: payload.feasibilityScore default null,
+    Rejection_Reason__c: payload.rejectionReason default null,
+    Promised_Ship_Date__c: payload.promisedShipDate default null,
+    Batch_Id__c: payload.batchId
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <set-variable variableName="recordPayload" value="#[payload]"/>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/data/v60.0/sobjects/Synthesis_Order__c">
+            <http:body><![CDATA[#[output application/json --- vars.recordPayload]]]></http:body>
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+        </http:request>
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ id: payload.id }]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="sf-update-order-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH"/>
+        <set-variable variableName="requestBody" value="#[payload]"/>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ attributes.uriParams.batchId ++ "'"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
+        <choice>
+            <when expression="#[sizeOf(payload.records) == 0]">
+                <set-variable variableName="httpStatus" value="404"/>
+                <set-payload value='#[output application/json --- { error: "order not found for batchId " ++ attributes.uriParams.batchId }]'/>
+            </when>
+            <otherwise>
+                <set-variable variableName="recordId" value="#[payload.records[0].Id]"/>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var body = vars.requestBody
+---
+{
+    (Status__c: body.status) if (body.status?),
+    (Progress_Pct__c: body.progressPct) if (body.progressPct?),
+    (Feasibility_Score__c: body.feasibilityScore) if (body.feasibilityScore?),
+    (Rejection_Reason__c: body.rejectionReason) if (body.rejectionReason?)
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+                <http:request config-ref="SFDC_Request_Config" method="PATCH" path="#['/services/data/v60.0/sobjects/Synthesis_Order__c/' ++ vars.recordId]">
+                    <http:body><![CDATA[#[payload]]]></http:body>
+                    <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+                </http:request>
+                <!-- Salesforce REST PATCH returns 204 No Content on success;
+                     don't try to read a body from it, just overwrite payload directly. -->
+                <set-payload value='#[output application/json --- { updated: true }]'/>
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="sf-get-orders-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="GET"/>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c ORDER BY CreatedDate DESC"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
+        <ee:transform>
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+payload.records map (order) -> {
+    id: order.Id,
+    name: order.Name,
+    status: order.Status__c,
+    feasibilityScore: order.Feasibility_Score__c,
+    progressPct: order.Progress_Pct__c,
+    batchId: order.Batch_Id__c,
+    promisedShipDate: order.Promised_Ship_Date__c
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+    </flow>
+
+    <flow name="sf-get-order-by-batch-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET"/>
+
+        <flow-ref name="get-sfdc-access-token-flow"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <ee:transform>
+            <ee:variables>
+                <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
+output text/plain
+---
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ attributes.uriParams.batchId ++ "'"]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
+        <choice>
+            <when expression="#[sizeOf(payload.records) == 0]">
+                <set-variable variableName="httpStatus" value="404"/>
+                <set-payload value='#[output application/json --- { error: "not found" }]'/>
+            </when>
+            <otherwise>
+                <ee:transform>
+                    <ee:message>
+                        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var order = payload.records[0]
+---
+{
+    id: order.Id,
+    name: order.Name,
+    status: order.Status__c,
+    feasibilityScore: order.Feasibility_Score__c,
+    progressPct: order.Progress_Pct__c,
+    batchId: order.Batch_Id__c,
+    promisedShipDate: order.Promised_Ship_Date__c
+}]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+            </otherwise>
+        </choice>
+    </flow>
+
+</mule>

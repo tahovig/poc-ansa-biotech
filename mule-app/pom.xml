@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.poc.ansa</groupId>
+    <artifactId>poc-ansa-biotech</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>mule-application</packaging>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <app.runtime>4.6.0</app.runtime>
+        <!--
+          Tried bumping this from the brief's 3.3.0 to 3.7.3 (the latest
+          version available for munit-runner, munit-tools, and
+          munit-maven-plugin alike on repository.mulesoft.org/releases,
+          bumped together to stay in lockstep) to test whether
+          munit-maven-plugin 3.3.0 wasn't hooking correctly into
+          mule-maven-plugin 4.10.1's packaging lifecycle. It did not help:
+          3.7.3 fails earlier and differently (a JPMS module conflict,
+          "Module reactor.core reads more than one module named
+          plexus.component.annotations", before the embedded container
+          even starts) rather than fixing the original silent
+          zero-tests-discovered problem. Reverted to 3.3.0, which is the
+          furthest-progressing combination found (clean deploy, but MUnit
+          still discovers zero tests for reasons undiagnosed from inside
+          this environment; see Task 5's report). Found while executing
+          Task 5.
+        -->
+        <munit.version>3.3.0</munit.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.mule.connectors</groupId>
+            <artifactId>mule-http-connector</artifactId>
+            <version>1.9.0</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.connectors</groupId>
+            <artifactId>mule-jms-connector</artifactId>
+            <version>1.9.2</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jms-client-all</artifactId>
+            <version>2.37.0</version>
+        </dependency>
+        <!--
+          Brief specified groupId org.mule.modules (plural) and version
+          1.2.19; neither resolves. Real groupId is org.mule.module
+          (singular, confirmed via MuleSoft's own Java Module docs and the
+          Anypoint Exchange metadata listing). 1.2.19 doesn't exist in that
+          listing at all (it jumps 1.2.18 -> 2.0.x), so pinned to the
+          nearest valid release. Found while executing Task 5.
+        -->
+        <dependency>
+            <groupId>org.mule.module</groupId>
+            <artifactId>mule-java-module</artifactId>
+            <version>1.2.18</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <dependency>
+            <groupId>com.mulesoft.munit</groupId>
+            <artifactId>munit-runner</artifactId>
+            <version>${munit.version}</version>
+            <classifier>mule-plugin</classifier>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.mulesoft.munit</groupId>
+            <artifactId>munit-tools</artifactId>
+            <version>${munit.version}</version>
+            <classifier>mule-plugin</classifier>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Bumped from the brief's 4.2.0. That version's process-classes
+              goal crashes with EnumConstantNotPresentException:
+              JavaVersion.JAVA_25 as soon as the project has any
+              src/main/java sources (JwtSigner.java here) on this JDK,
+              regardless of which mule-java-module version is used;
+              tried both 1.2.18 and 2.0.6, same crash either way, so it is
+              this plugin's own tooling, not the java-module dependency.
+              Bumped to the latest available release to pick up a fix.
+              Found while executing Task 5.
+            -->
+            <plugin>
+                <groupId>org.mule.tools.maven</groupId>
+                <artifactId>mule-maven-plugin</artifactId>
+                <version>4.10.1</version>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <groupId>com.mulesoft.munit.tools</groupId>
+                <artifactId>munit-maven-plugin</artifactId>
+                <version>${munit.version}</version>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                            <goal>coverage-report</goal>
+                        </goals>
+                        <configuration>
+                            <munitTests>
+                                <munitTest>**/*-test-suite.xml</munitTest>
+                            </munitTests>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+              The mule-application packaging's default lifecycle still binds
+              a plain maven-surefire-plugin "default-test" execution to the
+              test phase (for projects with Java-based unit tests under
+              src/test/java; this project's src/main/java has JwtSigner.java
+              but there are no Java tests under src/test/java). With no Java
+              test sources that execution is normally a harmless no-op, but
+              `-Dtest=<suite-name>` on the command line (per this task's run
+              command) is a generic Surefire filter property that this
+              unrelated execution also picks up and then fails on ("No tests
+              matching pattern"), aborting the build before the
+              munit-maven-plugin execution above ever runs. Telling it not
+              to fail when a -Dtest filter matches nothing keeps it a no-op
+              as intended. (Found while executing Task 5 the first time;
+              still needed after the Salesforce-connector-to-REST rewrite.)
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <repositories>
+        <repository>
+            <id>anypoint-exchange-v3</id>
+            <name>Anypoint Exchange</name>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/maven</url>
+        </repository>
+        <!--
+          The brief's Step 2 only lists mulesoft-releases as a
+          pluginRepository, but munit-runner/munit-tools (regular
+          test-scoped dependencies, not plugins) 3.3.0 only resolve
+          anonymously from repository.mulesoft.org/releases, not from
+          anypoint-exchange-v3 (confirmed by probing both directly). Found
+          while executing Task 5 the first time; still needed.
+        -->
+        <repository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <url>https://repository.mulesoft.org/releases/</url>
+        </repository>
+    </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <url>https://repository.mulesoft.org/releases/</url>
+        </pluginRepository>
+    </pluginRepositories>
+</project>

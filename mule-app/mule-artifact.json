@@ -1,0 +1,9 @@
+{
+  "minMuleVersion": "4.6.0",
+  "name": "poc-ansa-biotech",
+  "requiredProduct": "MULE",
+  "classLoaderModelLoaderDescriptor": {
+    "id": "mule",
+    "attributes": { "exportedPackages": [], "exportedResources": [] }
+  }
+}

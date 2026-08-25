@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:java="http://www.mulesoft.org/schema/mule/java"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd">
+
+    <munit:config name="salesforce-system-api-test-suite.xml"/>
+
+    <munit:test name="create-order-maps-fields-and-calls-salesforce-rest-create">
+        <munit:behavior>
+            <munit-tools:mock-when processor="java:invoke-static">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#['mock.jwt.assertion']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/oauth2/token" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/sobjects/Synthesis_Order__c" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ id: "001XX", success: true }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <set-event>
+                <munit-tools:payload value='#[output application/json --- { name: "ORD-1", accountId: "001AA", sequence: "ACGT", lengthBp: 4, status: "Feasible", feasibilityScore: 0.9, promisedShipDate: "2026-09-01", batchId: "batch-1" }]'/>
+            </set-event>
+            <flow-ref name="sf-create-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload.id]" is="#[MunitTools::equalTo('001XX')]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="get-orders-transforms-salesforce-records-to-json-shape">
+        <munit:behavior>
+            <munit-tools:mock-when processor="java:invoke-static">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#['mock.jwt.assertion']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/oauth2/token" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [{ Id: "001XX", Name: "ORD-1", Status__c: "Feasible", Feasibility_Score__c: 0.9, Progress_Pct__c: 0, Batch_Id__c: "batch-1", Promised_Ship_Date__c: "2026-09-01" }] }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <flow-ref name="sf-get-orders-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[payload[0].batchId]" is="#[MunitTools::equalTo('batch-1')]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="get-order-by-batch-returns-404-when-not-found">
+        <munit:behavior>
+            <munit-tools:mock-when processor="java:invoke-static">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#['mock.jwt.assertion']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/oauth2/token" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [] }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <set-event>
+                <munit-tools:attributes value='#[{ uriParams: { batchId: "unknown-batch" } }]'/>
+            </set-event>
+            <flow-ref name="sf-get-order-by-batch-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('404')]"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>
