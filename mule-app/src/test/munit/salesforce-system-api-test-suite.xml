@@ -39,9 +39,9 @@
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { name: "ORD-1", accountId: "001AA", sequence: "ACGT", lengthBp: 4, status: "Feasible", feasibilityScore: 0.9, promisedShipDate: "2026-09-01", batchId: "batch-1" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { name: "ORD-1", accountId: "001AA", sequence: "ACGT", lengthBp: 4, status: "Feasible", feasibilityScore: 0.9, promisedShipDate: "2026-09-01", batchId: "batch-1" }]'/>
+            </munit:set-event>
             <flow-ref name="sf-create-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -106,9 +106,9 @@
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:attributes value='#[{ uriParams: { batchId: "unknown-batch" } }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:attributes value='#[{ uriParams: { batchId: "unknown-batch" } }]'/>
+            </munit:set-event>
             <flow-ref name="sf-get-order-by-batch-flow"/>
         </munit:execution>
         <munit:validation>

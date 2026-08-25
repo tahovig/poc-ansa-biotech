@@ -1,6 +1,7 @@
 package com.poc.ansa;
 
-import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.PrivateKey;
@@ -12,8 +13,17 @@ public class JwtSigner {
     public static String sign(String consumerKey, String username, String audience,
                                String keystorePath, String keystorePassword, String keyAlias) throws Exception {
         KeyStore keyStore = KeyStore.getInstance("PKCS12");
-        try (FileInputStream fis = new FileInputStream(keystorePath)) {
-            keyStore.load(fis, keystorePassword.toCharArray());
+        // keystorePath (e.g. "keys/sfdc-jwt.p12") is packaged onto the app's
+        // classpath under src/main/resources, not left as a loose file next
+        // to the runtime's working directory -- load it as a classpath
+        // resource, not via FileInputStream, or this throws
+        // FileNotFoundException in the real deployment (Task 12's Dockerfile
+        // only copies the built jar, not the source tree).
+        try (InputStream is = JwtSigner.class.getClassLoader().getResourceAsStream(keystorePath)) {
+            if (is == null) {
+                throw new IOException("Keystore not found on classpath: " + keystorePath);
+            }
+            keyStore.load(is, keystorePassword.toCharArray());
         }
         PrivateKey privateKey = (PrivateKey) keyStore.getKey(keyAlias, keystorePassword.toCharArray());
 

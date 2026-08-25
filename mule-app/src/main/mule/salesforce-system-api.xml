@@ -73,7 +73,9 @@ output application/json
     </flow>
 
     <flow name="sf-update-order-flow">
-        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH"/>
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+        </http:listener>
         <set-variable variableName="requestBody" value="#[payload]"/>
 
         <flow-ref name="get-sfdc-access-token-flow"/>
@@ -83,8 +85,9 @@ output application/json
             <ee:variables>
                 <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
 output text/plain
+var safeBatchId = attributes.uriParams.batchId replace "'" with "\\'"
 ---
-"SELECT Id FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ attributes.uriParams.batchId ++ "'"]]></ee:set-variable>
+"SELECT Id FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ safeBatchId ++ "'"]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
@@ -164,7 +167,9 @@ payload.records map (order) -> {
     </flow>
 
     <flow name="sf-get-order-by-batch-flow">
-        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET"/>
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+        </http:listener>
 
         <flow-ref name="get-sfdc-access-token-flow"/>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
@@ -173,8 +178,9 @@ payload.records map (order) -> {
             <ee:variables>
                 <ee:set-variable variableName="soql"><![CDATA[%dw 2.0
 output text/plain
+var safeBatchId = attributes.uriParams.batchId replace "'" with "\\'"
 ---
-"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ attributes.uriParams.batchId ++ "'"]]></ee:set-variable>
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = '" ++ safeBatchId ++ "'"]]></ee:set-variable>
             </ee:variables>
         </ee:transform>
 
