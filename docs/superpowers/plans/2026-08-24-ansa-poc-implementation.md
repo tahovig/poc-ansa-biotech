@@ -980,13 +980,14 @@ output application/java
                 <ee:set-payload><![CDATA[%dw 2.0
 output application/json
 ---
-{ id: payload[0].id, batchId: vars.originalBatchId default null }]]></ee:set-payload>
+{ id: payload[0].id }]]></ee:set-payload>
             </ee:message>
         </ee:transform>
     </flow>
 
     <flow name="sf-update-order-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="PATCH"/>
+        <set-variable variableName="requestBody" value="#[payload]"/>
         <salesforce:query config-ref="Salesforce_Config">
             <salesforce:salesforce-query><![CDATA[SELECT Id FROM Synthesis_Order__c WHERE Batch_Id__c = ':batchId']]></salesforce:salesforce-query>
             <salesforce:parameters><![CDATA[#[{ 'batchId': attributes.uriParams.batchId }]]]></salesforce:parameters>
@@ -1002,7 +1003,7 @@ output application/json
                     <ee:message>
                         <ee:set-payload><![CDATA[%dw 2.0
 output application/java
-var body = vars.httpBody default payload
+var body = vars.requestBody
 ---
 {
     Id: vars.recordId,
