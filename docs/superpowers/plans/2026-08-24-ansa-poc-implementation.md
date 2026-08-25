@@ -833,13 +833,20 @@ git commit -m "Add ActiveMQ Artemis to docker-compose"
 {
   "minMuleVersion": "4.6.0",
   "name": "poc-ansa-biotech",
-  "requiredProduct": "MULE_EE",
+  "requiredProduct": "MULE",
   "classLoaderModelLoaderDescriptor": {
     "id": "mule",
     "attributes": { "exportedPackages": [], "exportedResources": [] }
   }
 }
 ```
+
+**Note (fixed during Task 5 execution):** originally specified `MULE_EE`, which
+forces Maven to pull a licensed Enterprise runtime to execute MUnit
+tests — requiring Anypoint EE credentials this project doesn't have and
+directly contradicting this plan's own Global Constraint (Community
+Edition, no Anypoint account required). `MULE` (Community Edition) is
+correct here; see the ledger's Ruling entry for Task 5.
 
 - [ ] **Step 2: Write `pom.xml`**
 
