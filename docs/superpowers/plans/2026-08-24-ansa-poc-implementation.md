@@ -32,6 +32,7 @@ this pivot. See the ledger's Ruling entry for full detail.
 - Salesforce write happens **before** the queue publish on order creation (write-before-publish ordering) — never the reverse.
 - Telemetry consumer only advances `Status__c` forward along the lifecycle `Submitted → Feasible/Rejected → In_Synthesis → QC → Shipped` (with `At_Risk` as a lateral flag) — never backward.
 - Commits in this repo carry no `Co-Authored-By` trailer — author is the user's own identity only.
+- **MUnit execution is a known, documented environment limitation in this sandbox (decided during Task 5 — see the ledger's Ruling entry for the full elimination chain).** MUnit's embedded test container deploys the app cleanly with zero errors but silently discovers and runs zero test suites, for reasons that resisted diagnosis even after: independently verifying every connector/module/XML attribute against decompiled bytecode; trying multiple Mule runtime and plugin version combinations; purging and force-refreshing the local Maven cache; and eliminating a cross-filesystem (WSL/Windows-mount) hypothesis by installing a fully native Maven. For every Mule task (5 through 9), the acceptance bar is therefore **`mvn clean package` succeeding** (schema/structural validation plus a successfully built deployable artifact) rather than `mvn test`/a green MUnit run. Each task's MUnit suite should still be written correctly per its TDD steps — it documents real testing intent and would run in a normal Anypoint Studio or properly-provisioned environment — but its pass/fail is not the gate here. Real functional verification happens via Task 12's end-to-end `docker-compose` run against the live Salesforce org. Use the native Maven at `~/tools/apache-maven-3.9.6/bin/mvn` for all Mule build/test commands in this environment, not the system `mvn` (3.6.3, incompatible with `mule-maven-plugin` 4.10.1) or any Windows-mounted install.
 
 ---
 
@@ -1495,14 +1496,18 @@ The `get-order-by-batch` test needs `attributes.uriParams.batchId` set via
 in a MUnit `flow-ref` execution) — the value doesn't matter since the mock
 always returns zero records regardless of what SOQL was built from it.
 
-- [ ] **Step 7: Run MUnit to verify failures, then implementation, then pass**
+- [ ] **Step 7: Build and verify (see the MUnit limitation in Global Constraints)**
+
+MUnit execution does not work in this sandbox — see the Global Constraints
+note. The acceptance bar for this step is a clean package build, not a
+green MUnit run:
 
 ```bash
 cd mule-app
-mvn -q clean test -Dtest=salesforce-system-api-test-suite
+~/tools/apache-maven-3.9.6/bin/mvn clean package
 ```
 
-Expected first run (before `salesforce-system-api.xml` exists): build/test failure referencing missing flow names. After Step 5's flow file is in place: `Tests run: 3, Failures: 0, Errors: 0`. If a flow name or DataWeave field mismatch causes a failure, fix `salesforce-system-api.xml` to match this suite's expectations (the flow file is the thing under test) and re-run until green.
+Expected: `BUILD SUCCESS`, producing `target/poc-ansa-biotech-1.0.0-SNAPSHOT-mule-application.jar` (or similarly named deployable artifact). This validates XML schema correctness, DataWeave syntax, and that every flow/config/connector reference resolves — the same class of errors MUnit's RED phase would have caught. The MUnit suite (Step 6) stays in the repo as correct, intentional test design; it just can't be executed as the pass/fail gate here. Real functional verification of these flows happens in Task 12's end-to-end run against the live Salesforce org.
 
 - [ ] **Step 8: Commit**
 
