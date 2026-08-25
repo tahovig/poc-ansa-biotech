@@ -74,7 +74,8 @@ poc-ansa-biotech/
 │   │   ├── process-api.xml
 │   │   └── experience-api.xml
 │   ├── src/main/resources/
-│   │   └── log4j2.xml
+│   │   ├── log4j2.xml
+│   │   └── keys/              (gitignored: sfdc-jwt.key, sfdc-jwt.crt, sfdc-jwt.p12 — Task 2)
 │   └── src/test/munit/
 │       ├── salesforce-system-api-test-suite.xml
 │       ├── feasibility-system-api-test-suite.xml
@@ -320,40 +321,92 @@ git commit -m "Add Synthesis_Order__c Salesforce object metadata"
 
 ---
 
-### Task 2: Salesforce Connected App + OAuth credentials
+### Task 2: Salesforce External Client App + JWT Bearer auth
+
+**Revised during execution.** The plan originally specified the OAuth 2.0
+Username-Password flow. That flow (and the classic SOAP `login()` API) are
+both **blocked by default** on this org — Salesforce disables both for any
+org created Summer '23 or later, and the toggle to re-enable
+Username-Password is not editable even by an org admin on this org. This
+was discovered empirically while executing this task (see the ledger's
+Ruling entry). The plan now uses the **OAuth 2.0 JWT Bearer flow** instead:
+Mule signs a JWT with a private key; Salesforce verifies it against a
+certificate uploaded to the app. No password crosses the wire, and this
+flow is not affected by the Username-Password block.
 
 **Files:**
-- Create: `.env.example`
 - Create: `.gitignore`
+- Create: `.env.example`
+- Create (gitignored, not committed): `mule-app/src/main/resources/keys/sfdc-jwt.key`, `sfdc-jwt.crt`, `sfdc-jwt.p12`
 
 **Interfaces:**
-- Produces: `.env` (untracked, created locally by whoever runs this) supplying `SFDC_CONSUMER_KEY`, `SFDC_CONSUMER_SECRET`, `SFDC_USERNAME`, `SFDC_PASSWORD`, `SFDC_SECURITY_TOKEN`, `SFDC_TOKEN_URL` — consumed by `global-config.xml` in Task 5.
+- Produces: `.env` (untracked) supplying `SFDC_CONSUMER_KEY`, `SFDC_USERNAME`, `SFDC_TOKEN_URL`, `SFDC_JWT_AUDIENCE`, `SFDC_JWT_KEYSTORE_PATH`, `SFDC_JWT_KEYSTORE_PASSWORD`, `SFDC_JWT_KEY_ALIAS` — consumed by `global-config.xml` in Task 5. Also produces the PKCS12 keystore file that same config references.
 
-- [ ] **Step 1: Create the Connected App in Salesforce Setup (manual, one-time)**
+- [ ] **Step 1: Create the External Client App in Salesforce Setup (manual, one-time)**
 
-In the dev org (Setup → App Manager → New Connected App):
-1. Connected App Name: `Ansa POC Mule Integration`, API Name auto-fills, contact email: your email.
-2. Enable OAuth Settings: checked.
-3. Callback URL: `http://localhost:8081/callback` (unused by the User-Password flow but required to save).
-4. Selected OAuth Scopes: add "Manage user data via APIs (api)" and "Perform requests at any time (refresh_token, offline_access)".
-5. Save, then wait ~2-10 minutes for the app to propagate.
-6. Open the app, click "Manage Consumer Details" (may require verification code via email) — record the **Consumer Key** and **Consumer Secret**.
-7. Edit the Connected App's policy: set "Permitted Users" to "All users may self-authorize" (simplest for a dev org; avoids needing a separate profile-based pre-authorization step).
+In the dev org (Setup → App Manager → **New External Client App** — not "New Lightning App"):
+1. Name: `Ansa POC Mule Integration`, any contact email.
+2. Enable OAuth Settings, Callback URL: `http://localhost:8081/callback` (required to save, unused by JWT Bearer).
+3. OAuth Scopes: add "Manage user data via APIs (api)" and "Perform requests at any time (refresh_token, offline_access)".
+4. Save, wait for propagation (10+ minutes — this app type propagates slower than classic Connected Apps).
+5. Under **Flow Enablement**, check **"Enable JWT Bearer Flow"** — this reveals a Certificate Upload control (it's hidden until this box is checked, unlike the classic Connected App UI).
+6. Open the app → **Policies** tab → note the Consumer Key shown there (Consumer Secret is also shown but unused by JWT Bearer — no need to record it).
 
-- [ ] **Step 2: Reset your Salesforce security token**
-
-In the dev org: Settings (your avatar) → My Personal Information → Reset My Security Token. Salesforce emails the new token to your account's email address. Record it.
-
-- [ ] **Step 3: Write `.env.example` (committed, no real values)**
+- [ ] **Step 2: Generate a self-signed keypair and package it as a keystore**
 
 ```bash
-# Salesforce (OAuth User-Password flow via Connected App)
+mkdir -p mule-app/src/main/resources/keys
+openssl req -x509 -sha256 -nodes -days 3650 -newkey rsa:2048 \
+  -keyout mule-app/src/main/resources/keys/sfdc-jwt.key \
+  -out mule-app/src/main/resources/keys/sfdc-jwt.crt \
+  -subj "/CN=ansa-poc-mule-integration/O=Ansa POC/C=US"
+openssl pkcs12 -export \
+  -in mule-app/src/main/resources/keys/sfdc-jwt.crt \
+  -inkey mule-app/src/main/resources/keys/sfdc-jwt.key \
+  -out mule-app/src/main/resources/keys/sfdc-jwt.p12 \
+  -name sfdc-jwt -passout pass:changeit
+```
+
+None of these three files are committed — see Step 4's `.gitignore`.
+
+- [ ] **Step 3: Upload the certificate and pre-authorize the app**
+
+1. On the External Client App's Flow Enablement section (from Step 1.5), upload `sfdc-jwt.crt` under Certificate Upload. Confirm the displayed subject matches `C=US, O=Ansa POC, CN=ansa-poc-mule-integration`.
+2. On the **Policies** tab, change "Permitted Users" (App Authorization) to **"Admin approved users are pre-authorized"** — JWT Bearer has no browser consent screen, so pre-authorization replaces it.
+3. Create a Permission Set (Setup → Permission Sets → New; any label, License = `--None--`).
+4. Back on the External Client App's Policies tab, a "Select Permission Sets" control appears once Permitted Users is set to pre-authorized — add the new Permission Set to "Selected Permission Sets" and save.
+5. On the Permission Set itself → Manage Assignments → Add Assignment → assign it to your own user.
+
+- [ ] **Step 4: Write `.gitignore`**
+
+```
+.env
+mule-app/src/main/resources/keys/
+*.log
+target/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+salesforce/.sf/
+```
+
+- [ ] **Step 5: Write `.env.example` (committed, no real values)**
+
+```bash
+# Salesforce (OAuth 2.0 JWT Bearer flow via External Client App).
+# Username-password and SOAP login() are both blocked by default on this org
+# (Salesforce policy for orgs created Summer '23+), so auth uses a signed JWT
+# instead of a password. See Task 2 in the implementation plan for how the
+# keystore at mule-app/src/main/resources/keys/sfdc-jwt.p12 was generated and
+# how the app's Connected App / Permission Set were configured to allow it.
 SFDC_CONSUMER_KEY=
-SFDC_CONSUMER_SECRET=
 SFDC_USERNAME=
-SFDC_PASSWORD=
-SFDC_SECURITY_TOKEN=
 SFDC_TOKEN_URL=https://orgfarm-46688fa9f2-dev-ed.develop.my.salesforce.com/services/oauth2/token
+SFDC_JWT_AUDIENCE=https://login.salesforce.com
+SFDC_JWT_KEYSTORE_PATH=keys/sfdc-jwt.p12
+SFDC_JWT_KEYSTORE_PASSWORD=changeit
+SFDC_JWT_KEY_ALIAS=sfdc-jwt
 
 # Mule — SF/Feasibility-System/Process API hosts are "localhost" because
 # all four tiers run as one Mule app (see mule-app/ note in the plan's File
@@ -376,46 +429,64 @@ ACTIVEMQ_STOMP_HOST=activemq
 ACTIVEMQ_STOMP_PORT=61613
 ```
 
-- [ ] **Step 4: Write `.gitignore`**
-
-```
-.env
-*.log
-target/
-__pycache__/
-*.pyc
-.pytest_cache/
-node_modules/
-```
-
-- [ ] **Step 5: Create your local `.env` from the template**
+- [ ] **Step 6: Create your local `.env` from the template**
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in the five `SFDC_*` values recorded in Steps 1-2. This file stays local, never committed.
+Fill in `SFDC_CONSUMER_KEY` and `SFDC_USERNAME` (from Step 1.6); `SFDC_JWT_KEYSTORE_PATH` should be the path to Step 2's `.p12` file relative to wherever the verification script or Mule app runs from. This file stays local, never committed.
 
-- [ ] **Step 6: Verify the OAuth credentials work**
-
-```bash
-source .env
-curl -s -X POST "$SFDC_TOKEN_URL" \
-  -d "grant_type=password" \
-  -d "client_id=$SFDC_CONSUMER_KEY" \
-  -d "client_secret=$SFDC_CONSUMER_SECRET" \
-  -d "username=$SFDC_USERNAME" \
-  -d "password=${SFDC_PASSWORD}${SFDC_SECURITY_TOKEN}"
-```
-
-Expected: JSON response containing an `access_token` and `instance_url`. If you get `invalid_grant`, double check the password+token concatenation has no extra whitespace and the Connected App has finished propagating.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Verify the JWT Bearer credentials work**
 
 ```bash
-git add .env.example .gitignore
-git commit -m "Add env template and gitignore for Salesforce OAuth credentials"
+pip install --quiet pyjwt cryptography
+python3 - <<'EOF'
+import time, urllib.request, urllib.parse, json, jwt
+
+env = {}
+with open(".env") as f:
+    for line in f:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        env[k] = v
+
+with open(env["SFDC_JWT_KEYSTORE_PATH"].replace(".p12", ".key")) as f:
+    private_key = f.read()
+
+claims = {
+    "iss": env["SFDC_CONSUMER_KEY"],
+    "sub": env["SFDC_USERNAME"],
+    "aud": env["SFDC_JWT_AUDIENCE"],
+    "exp": int(time.time()) + 300,
+}
+assertion = jwt.encode(claims, private_key, algorithm="RS256")
+data = urllib.parse.urlencode({
+    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    "assertion": assertion,
+}).encode()
+req = urllib.request.Request(env["SFDC_TOKEN_URL"], data=data, method="POST")
+try:
+    with urllib.request.urlopen(req) as resp:
+        body = json.loads(resp.read())
+        print("HTTP", resp.status, "access_token present:", "access_token" in body)
+except urllib.error.HTTPError as e:
+    print("HTTP", e.code, json.loads(e.read()))
+EOF
 ```
+
+Expected: `HTTP 200 access_token present: True`. If you get `invalid_grant: user hasn't approved this consumer`, the Permission Set from Step 3 isn't assigned yet or hasn't propagated. If you get an assertion/signature error, double check the uploaded certificate matches the keypair generated in Step 2.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add .gitignore .env.example
+git commit -m "Add JWT Bearer auth setup for Salesforce (Username-Password flow is blocked on this org)"
+```
+
+The keystore files (`.key`/`.crt`/`.p12`) are never committed — anyone re-running this plan regenerates their own via Step 2.
 
 ---
 
@@ -918,13 +989,26 @@ git commit -m "Add ActiveMQ Artemis to docker-compose"
         <http:request-connection host="${feasibility.system.api.host}" port="${feasibility.system.api.port}" />
     </http:request-config>
 
+    <!--
+      JWT Bearer flow, not Username-Password: this org blocks the legacy
+      OAuth Username-Password flow and SOAP login() by default (Salesforce
+      policy for orgs created Summer '23+), discovered while executing
+      Task 2. See Task 2's revised text for how the keystore, certificate,
+      and Permission Set pre-authorization were set up. Exact attribute
+      names for the JWT connection type should be verified against the
+      installed Salesforce Connector version's docs/XSD when this flow is
+      first built — same caveat as the connector version note in Task 5's
+      pom.xml step.
+    -->
     <salesforce:sfdc-config name="Salesforce_Config">
-        <salesforce:oauth-user-password-connection
+        <salesforce:oauth-jwt-flow-connection
             consumerKey="${sfdc.consumer.key}"
-            consumerSecret="${sfdc.consumer.secret}"
             username="${sfdc.username}"
-            password="${sfdc.password}"
-            securityToken="${sfdc.security.token}"
+            keyStore="${sfdc.jwt.keystore.path}"
+            storePassword="${sfdc.jwt.keystore.password}"
+            certificateAlias="${sfdc.jwt.key.alias}"
+            keyPassword="${sfdc.jwt.keystore.password}"
+            audience="${sfdc.jwt.audience}"
             tokenUrl="${sfdc.token.url}" />
     </salesforce:sfdc-config>
 
@@ -2285,11 +2369,12 @@ exec /opt/mule/bin/mule \
   -M-Dfeasibility.system.api.host="${FEASIBILITY_SYSTEM_API_HOST}" \
   -M-Dprocess.api.host="${PROCESS_API_HOST}" \
   -M-Dsfdc.consumer.key="${SFDC_CONSUMER_KEY}" \
-  -M-Dsfdc.consumer.secret="${SFDC_CONSUMER_SECRET}" \
   -M-Dsfdc.username="${SFDC_USERNAME}" \
-  -M-Dsfdc.password="${SFDC_PASSWORD}" \
-  -M-Dsfdc.security.token="${SFDC_SECURITY_TOKEN}" \
   -M-Dsfdc.token.url="${SFDC_TOKEN_URL}" \
+  -M-Dsfdc.jwt.audience="${SFDC_JWT_AUDIENCE}" \
+  -M-Dsfdc.jwt.keystore.path="${SFDC_JWT_KEYSTORE_PATH}" \
+  -M-Dsfdc.jwt.keystore.password="${SFDC_JWT_KEYSTORE_PASSWORD}" \
+  -M-Dsfdc.jwt.key.alias="${SFDC_JWT_KEY_ALIAS}" \
   -M-Dactivemq.broker.url="${ACTIVEMQ_BROKER_URL}"
 ```
 
