@@ -34,8 +34,23 @@
       is otherwise unchanged.
     -->
 
+    <!--
+      No response/error-response override, and no error-handler, existed
+      on any flow in this file except sf-get-order-by-batch-flow: a
+      Salesforce 400 (bad accountId, a validation rule, an FLS gap) on
+      any of the other three propagated as a bare, unhandled Mule 500
+      with no useful body. Found reviewing the final branch. All three
+      now wire httpStatus the same way sf-get-order-by-batch-flow
+      already did, plus an error-handler mapping the Salesforce-call
+      failure types to a real error body instead of an opaque 500.
+    -->
     <flow name="sf-create-order-flow">
-        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="POST"/>
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="POST">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+        </http:listener>
         <set-payload value='#[%dw 2.0
 output application/json
 ---
@@ -64,10 +79,22 @@ output application/json
 output application/json
 ---
 { id: payload.id }]'/>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "salesforce create failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
     </flow>
 
     <flow name="sf-get-orders-flow">
-        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="GET"/>
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+        </http:listener>
 
         <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
@@ -94,6 +121,13 @@ payload.records map (order) -> {
     batchId: order.Batch_Id__c,
     promisedShipDate: order.Promised_Ship_Date__c
 }]'/>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "salesforce query failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
     </flow>
 
     <!--
@@ -123,6 +157,9 @@ payload.records map (order) -> {
     <flow name="sf-get-order-by-batch-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET, PATCH">
             <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
         </http:listener>
         <set-variable variableName="requestBody" value="#[payload]"/>
         <set-variable variableName="batchId" value="#[attributes.uriParams.batchId]"/>
@@ -131,9 +168,19 @@ payload.records map (order) -> {
         <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
 
+        <!--
+          Backslash must be escaped before the quote, not after: escaping
+          "'" -> "\'" alone still lets an attacker-supplied backslash
+          immediately before a quote produce "\\'" in the output, which
+          SOQL reads as one literal backslash followed by a closing
+          quote; the string closes early and whatever follows becomes
+          query syntax. Found reviewing the final branch (never
+          exercised in practice: every real batchId is a UUID, no quotes
+          or backslashes involved).
+        -->
         <set-variable variableName="soql" value='#[%dw 2.0
 output text/plain
-var safeBatchId = vars.batchId replace "&apos;" with "\\&apos;"
+var safeBatchId = (vars.batchId replace "\\" with "\\\\") replace "&apos;" with "\\&apos;"
 ---
 "SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
 
@@ -187,6 +234,13 @@ var order = payload.records[0]
                 </choice>
             </otherwise>
         </choice>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "salesforce request failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
     </flow>
 
 </mule>

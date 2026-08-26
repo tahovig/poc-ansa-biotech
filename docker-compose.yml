@@ -4,6 +4,21 @@ services:
     environment:
       ARTEMIS_USER: admin
       ARTEMIS_PASSWORD: admin
+    volumes:
+      # Pre-declares synthesis-jobs/batch-telemetry as anycast so their
+      # routing type doesn't depend on whichever of Mule (JMS) or the
+      # simulator (STOMP) happens to touch each address first on a fresh
+      # broker. See the file's own comment for the full story. Mounted
+      # into etc-override, not directly over etc/broker.xml: the
+      # image's own entrypoint (docker-run.sh) decides whether to run
+      # its full "artemis create" bootstrap (which creates bin/, data/,
+      # everything) by checking whether etc/broker.xml already exists;
+      # bind-mounting straight into etc/ tricks it into skipping that
+      # bootstrap entirely, so bin/artemis itself never gets created and
+      # the container fails immediately. etc-override is the image's
+      # own documented mechanism for exactly this: files placed there
+      # get copied over the generated etc/ after bootstrap completes.
+      - ./activemq/broker.xml:/var/lib/artemis-instance/etc-override/broker.xml:ro
     ports:
       - "8161:8161"
       - "61616:61616"
@@ -25,9 +40,9 @@ services:
     environment:
       SFDC_JWT_PRIVATE_KEY_PATH: /app/keys/sfdc-jwt.key
     volumes:
-      - ./mule-app/src/main/resources/keys/sfdc-jwt.key:/app/keys/sfdc-jwt.key:ro
-    ports:
-      - "5002:5002"
+      - ./keys/sfdc-jwt.key:/app/keys/sfdc-jwt.key:ro
+    # No host port mapping: only mule-app calls this, over the compose
+    # network, and it hands out live Salesforce access tokens on request.
 
   mule-app:
     build: ./mule-app
@@ -47,6 +62,7 @@ services:
 
   instrument-simulator:
     build: ./services/instrument-simulator
+    env_file: .env
     environment:
       ACTIVEMQ_STOMP_HOST: activemq
       ACTIVEMQ_STOMP_PORT: "61613"

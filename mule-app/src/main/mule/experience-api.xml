@@ -1,18 +1,56 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
-      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
 
+    <!--
+      The dashboard (localhost:8090) submits orders to this API
+      (localhost:8081) with a JSON Content-Type, which makes it a
+      non-simple cross-origin request; browsers send an OPTIONS
+      preflight first and only proceed with the real POST if the
+      preflight response allows it. Found reviewing the final branch:
+      only GET/POST listeners existed, so every preflight got a 405 with
+      no CORS headers, the browser silently blocked the POST, and the
+      submit button did nothing; never caught because every verified
+      end-to-end run so far used curl, which never preflights.
+    -->
+    <flow name="experience-orders-preflight-flow">
+        <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="OPTIONS">
+            <http:response statusCode="204">
+                <http:headers><![CDATA[#[{
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type'
+                }]]]></http:headers>
+            </http:response>
+        </http:listener>
+        <set-payload value="#[null]"/>
+    </flow>
+
+    <!--
+      Neither flow below had an <http:error-response> or error-handler at
+      all: a downstream failure (Process API/System API returning a
+      clean 502 of its own, per their now-added error-handlers) still
+      isn't this flow's vars/payload; an http:request that gets a non-2xx
+      back raises an error in the CALLING flow, and without a handler
+      here that error had nowhere to go but Mule's bare default 500,
+      with no CORS header, which browsers report as an opaque failure
+      indistinguishable from the CORS bug this same review found. Found
+      reviewing the final branch, testing the new Salesforce-write error
+      handling with a real invalid accountId end to end.
+    -->
     <flow name="experience-submit-order-flow">
         <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="POST">
             <http:response statusCode="#[vars.httpStatus default 200]">
                 <http:headers><![CDATA[#[{'Access-Control-Allow-Origin': '*'}]]]></http:headers>
             </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+                <http:headers><![CDATA[#[{'Access-Control-Allow-Origin': '*'}]]]></http:headers>
+            </http:error-response>
         </http:listener>
         <choice>
             <when expression="#[not (isEmpty(payload.sequence default '')) and (payload.sequence matches /^[ACGTN]+$/)]">
@@ -25,6 +63,13 @@
                 <set-payload value='#[output application/json --- { error: "sequence must be non-empty and contain only IUPAC bases A/C/G/T/N" }]'/>
             </otherwise>
         </choice>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "order submission failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
     </flow>
 
     <flow name="experience-get-orders-flow">
@@ -32,8 +77,19 @@
             <http:response statusCode="#[vars.httpStatus default 200]">
                 <http:headers><![CDATA[#[{'Access-Control-Allow-Origin': '*'}]]]></http:headers>
             </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+                <http:headers><![CDATA[#[{'Access-Control-Allow-Origin': '*'}]]]></http:headers>
+            </http:error-response>
         </http:listener>
         <http:request config-ref="SF_System_API_Request_Config" method="GET" path="/synthesis-orders"/>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "order lookup failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
     </flow>
 
 </mule>

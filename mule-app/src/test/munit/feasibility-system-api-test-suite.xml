@@ -10,6 +10,14 @@
         http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
         http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
 
+    <!--
+      The mocked payload below was double-array-wrapped
+      (#[[{ ... }]] instead of #[{ ... }]); payload.feasible on a
+      one-element Array isn't true even when the element's feasible is,
+      so this assertion was wrong even given a working MUnit run. Fixed
+      reviewing the final branch. Still unexecutable in this sandbox
+      (see the plan's Task 5 note).
+    -->
     <munit:config name="feasibility-system-api-test-suite.xml"/>
 
     <munit:test name="feasibility-flow-proxies-request-and-returns-scoring-response">
@@ -19,7 +27,7 @@
                     <munit-tools:with-attribute whereValue="/feasibility" attributeName="path"/>
                 </munit-tools:with-attributes>
                 <munit-tools:then-return>
-                    <munit-tools:payload value='#[[{ score: 0.9, feasible: true, reasons: [], flags: { gc_content: 0.5, max_homopolymer_run: 3, repeat_regions: [] } }]]' mediaType="application/json"/>
+                    <munit-tools:payload value='#[{ score: 0.9, feasible: true, reasons: [], flags: { gc_content: 0.5, max_homopolymer_run: 3, repeat_regions: [] } }]' mediaType="application/json"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
         </munit:behavior>

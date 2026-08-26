@@ -1,5 +1,5 @@
 .env
-mule-app/src/main/resources/keys/
+keys/
 *.log
 target/
 __pycache__/

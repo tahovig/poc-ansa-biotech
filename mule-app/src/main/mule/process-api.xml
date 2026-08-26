@@ -105,10 +105,21 @@ output application/json
             </otherwise>
         </choice>
 
+        <!--
+          Broadened from HTTP:TIMEOUT, HTTP:CONNECTIVITY only: those two
+          cover the feasibility call failing to connect, but not a
+          Salesforce write returning a real error response (e.g. a bad
+          accountId), which propagated as a bare, unhandled Mule 500.
+          Found reviewing the final branch. The message stays generic
+          ("order submission failed") rather than naming which upstream
+          call failed, since both the feasibility call and the
+          Salesforce write can raise these same error types and this
+          flow doesn't track which step was in progress.
+        -->
         <error-handler>
-            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR">
                 <set-variable variableName="httpStatus" value="502"/>
-                <set-payload value='#[output application/json --- { error: "feasibility service unavailable" }]'/>
+                <set-payload value='#[output application/json --- { error: "order submission failed: an upstream service was unavailable or rejected the request" }]'/>
             </on-error-propagate>
         </error-handler>
     </flow>
@@ -150,11 +161,16 @@ output application/json
         <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
 
+        <!--
+          Backslash escaped before the quote, not after; see
+          salesforce-system-api.xml's matching comment for why escaping
+          "'" alone is still injectable.
+        -->
         <set-variable variableName="soql" value='#[%dw 2.0
 output text/plain
-var safeBatchId = vars.telemetry.batchId replace "&apos;" with "\\&apos;"
+var safeBatchId = (vars.telemetry.batchId replace "\\" with "\\\\") replace "&apos;" with "\\&apos;"
 ---
-"SELECT Id, Status__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
+"SELECT Id, Status__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
 
         <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
             <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
@@ -165,7 +181,7 @@ var safeBatchId = vars.telemetry.batchId replace "&apos;" with "\\&apos;"
             <when expression="#[sizeOf(payload.records) == 0]">
                 <jms:publish config-ref="JMS_Config" destination="batch-telemetry-dlq">
                     <jms:message>
-                        <jms:body><![CDATA[#[vars.telemetry]]]></jms:body>
+                        <jms:body><![CDATA[#[write(vars.telemetry, 'application/json')]]]></jms:body>
                     </jms:message>
                 </jms:publish>
             </when>
@@ -199,10 +215,33 @@ vars.lifecycleRank[vars.candidateStatus] >= vars.lifecycleRank[vars.currentOrder
 
                 <choice>
                     <when expression="#[vars.isForwardMove]">
-                        <set-variable variableName="daysElapsedRatio"
-                            value="#[if (vars.telemetry.progressPct == 0) 0 else (vars.telemetry.progressPct / 100)]"/>
+                        <!--
+                          Was progressPct < 50 alone, with no reference
+                          to Promised_Ship_Date__c at all; the spec
+                          calls for projecting against time remaining to
+                          that date, but this ignored it completely, so
+                          every order flipped to At_Risk at the first
+                          "running" tick (25%) regardless of how much
+                          slack was left before the promised date, then
+                          back to In_Synthesis at 50%, unconditionally,
+                          every run. Found reviewing the final branch.
+                          Now: only projected late if we're already
+                          within 3 days of the promised date (or past
+                          it) AND still under 50%; a real, if simple,
+                          reading of "current progress rate vs. time
+                          remaining" given this data model has no
+                          synthesis-start timestamp to compute a true
+                          elapsed-time ratio from.
+                        -->
                         <set-variable variableName="projectedLate"
-                            value="#[(vars.telemetry.event == 'running') and (vars.telemetry.progressPct &lt; 50)]"/>
+                            value='#[%dw 2.0
+output application/java
+var promisedShipDate = vars.currentOrder.Promised_Ship_Date__c
+---
+if (promisedShipDate == null) false
+else (vars.telemetry.event == "running")
+    and (vars.telemetry.progressPct &lt; 50)
+    and ((now() as Date) &gt;= ((promisedShipDate as Date) - |P3D|))]'/>
                         <set-variable variableName="finalStatus"
                             value="#[if (vars.projectedLate) 'At_Risk' else vars.candidateStatus]"/>
                         <set-payload value='#[%dw 2.0
@@ -220,6 +259,29 @@ output application/json
                 </choice>
             </otherwise>
         </choice>
+
+        <!--
+          No error-handler existed at all: a Salesforce failure on
+          either http:request above (query or PATCH) left JMS ack/
+          redelivery semantics completely undefined, risking an
+          infinite redelivery loop on a persistently-failing message
+          (e.g. a permanently-malformed telemetry event). Found
+          reviewing the final branch. on-error-continue here lets the
+          flow finish "successfully" from the JMS listener's point of
+          view (so the message acks and doesn't redeliver) while still
+          preserving the event for inspection, same DLQ the
+          lookup-miss case above already uses.
+        -->
+        <error-handler>
+            <on-error-continue type="ANY">
+                <logger level="ERROR" message="#['Telemetry processing failed for batch ' ++ (vars.telemetry.batchId default 'unknown') ++ ': ' ++ error.description]"/>
+                <jms:publish config-ref="JMS_Config" destination="batch-telemetry-dlq">
+                    <jms:message>
+                        <jms:body><![CDATA[#[write(vars.telemetry default {}, 'application/json')]]]></jms:body>
+                    </jms:message>
+                </jms:publish>
+            </on-error-continue>
+        </error-handler>
     </flow>
 
 </mule>

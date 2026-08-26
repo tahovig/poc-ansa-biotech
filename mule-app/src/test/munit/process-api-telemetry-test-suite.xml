@@ -12,16 +12,38 @@
         http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
         http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
 
+    <!--
+      Rewritten reviewing the final branch: this suite mocked a single
+      GET call returning a list-shaped body (matching the pre-Task-12
+      design, where telemetry-consumer-flow called back into this app's
+      own System API). Task 12 replaced that with a direct-to-Salesforce
+      SOQL query and PATCH (see process-api.xml's comment on
+      telemetry-consumer-flow for why), so this flow now makes three
+      http:request calls (GET /token, GET .../query, PATCH
+      .../sobjects/Synthesis_Order__c/{id}), and every mock here is
+      matched by path, not just method, to tell them apart. Still
+      unexecutable in this sandbox (see the plan's Task 5 note), but
+      kept honest against the real flow shape.
+    -->
+
     <munit:config name="process-api-telemetry-test-suite.xml"/>
 
     <munit:test name="running-event-advances-status-and-updates-progress">
         <munit:behavior>
             <munit-tools:mock-when processor="http:request">
                 <munit-tools:with-attributes>
-                    <munit-tools:with-attribute whereValue="GET" attributeName="method"/>
+                    <munit-tools:with-attribute whereValue="/token" attributeName="path"/>
                 </munit-tools:with-attributes>
                 <munit-tools:then-return>
-                    <munit-tools:payload value='#[[{ status: "Feasible", progressPct: 0, promisedShipDate: "2026-09-10" }]]' mediaType="application/json"/>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [{ Id: "001XX", Status__c: "Feasible", Promised_Ship_Date__c: "2099-01-01" }] }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
             <munit-tools:mock-when processor="http:request">
@@ -29,7 +51,7 @@
                     <munit-tools:with-attribute whereValue="PATCH" attributeName="method"/>
                 </munit-tools:with-attributes>
                 <munit-tools:then-return>
-                    <munit-tools:payload value='#[[{ updated: true }]]' mediaType="application/json"/>
+                    <munit-tools:payload value="#[null]"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
         </munit:behavior>
@@ -44,14 +66,61 @@
         </munit:validation>
     </munit:test>
 
+    <munit:test name="running-event-with-imminent-deadline-marks-at-risk">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/token" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <!-- Promised ship date one day out and still under 50% -->
+                    <munit-tools:payload value='#[{ records: [{ Id: "001XX", Status__c: "Feasible", Promised_Ship_Date__c: (now() + |P1D|) as String }] }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="PATCH" attributeName="method"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[null]"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "batch-1", progressPct: 25, event: "running", timestamp: "2026-08-24T10:00:00Z" }]'/>
+            </munit:set-event>
+            <flow-ref name="telemetry-consumer-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" withAttributeValue="#[{ attributeName: 'method', whereValue: 'PATCH' }]" times="1"/>
+        </munit:validation>
+    </munit:test>
+
     <munit:test name="stale-event-does-not-move-status-backward">
         <munit:behavior>
             <munit-tools:mock-when processor="http:request">
                 <munit-tools:with-attributes>
-                    <munit-tools:with-attribute whereValue="GET" attributeName="method"/>
+                    <munit-tools:with-attribute whereValue="/token" attributeName="path"/>
                 </munit-tools:with-attributes>
                 <munit-tools:then-return>
-                    <munit-tools:payload value='#[[{ status: "Shipped", progressPct: 100, promisedShipDate: "2026-09-10" }]]' mediaType="application/json"/>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [{ Id: "001XX", Status__c: "Shipped", Promised_Ship_Date__c: "2099-01-01" }] }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
         </munit:behavior>
@@ -70,11 +139,18 @@
         <munit:behavior>
             <munit-tools:mock-when processor="http:request">
                 <munit-tools:with-attributes>
-                    <munit-tools:with-attribute whereValue="GET" attributeName="method"/>
+                    <munit-tools:with-attribute whereValue="/token" attributeName="path"/>
                 </munit-tools:with-attributes>
                 <munit-tools:then-return>
-                    <munit-tools:attributes value='#[{ statusCode: 404 }]'/>
-                    <munit-tools:payload value='#[output application/json --- { error: "not found" }]'/>
+                    <munit-tools:payload value='#[{ access_token: "mock-token", instance_url: "https://mock.my.salesforce.com" }]' mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/services/data/v60.0/query" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ records: [] }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
             <munit-tools:mock-when processor="jms:publish"/>

@@ -28,9 +28,13 @@ async function fetchOrders() {
 }
 
 async function refresh() {
-  const orders = await fetchOrders();
-  const tbody = document.querySelector('#orders-body');
-  tbody.innerHTML = orders.map(formatOrderRow).join('');
+  try {
+    const orders = await fetchOrders();
+    const tbody = document.querySelector('#orders-body');
+    tbody.innerHTML = orders.map(formatOrderRow).join('');
+  } catch (err) {
+    console.error('refresh failed:', err);
+  }
 }
 
 async function submitOrder(event) {
@@ -41,14 +45,18 @@ async function submitOrder(event) {
     accountId: form.accountId.value.trim(),
     requestedShipDate: form.requestedShipDate.value,
   };
-  const res = await fetch(`${EXPERIENCE_API_BASE}/orders`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const result = await res.json();
-  document.querySelector('#submit-result').textContent = JSON.stringify(result);
-  await refresh();
+  try {
+    const res = await fetch(`${EXPERIENCE_API_BASE}/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await res.json();
+    document.querySelector('#submit-result').textContent = JSON.stringify(result);
+    await refresh();
+  } catch (err) {
+    document.querySelector('#submit-result').textContent = `Submission failed: ${err.message}`;
+  }
 }
 
 if (typeof module !== 'undefined') {

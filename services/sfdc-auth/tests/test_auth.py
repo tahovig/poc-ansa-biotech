@@ -63,6 +63,7 @@ def test_fetch_access_token_posts_jwt_bearer_grant_and_returns_shape(mock_post):
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": "mock.assertion.value",
         },
+        timeout=10,
     )
     assert result == {"access_token": "mock-token", "instance_url": "https://mock.my.salesforce.com"}
 

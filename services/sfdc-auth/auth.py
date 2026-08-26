@@ -21,6 +21,7 @@ def fetch_access_token(token_url: str, assertion: str) -> dict:
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": assertion,
         },
+        timeout=10,
     )
     resp.raise_for_status()
     body = resp.json()

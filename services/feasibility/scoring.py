@@ -5,6 +5,7 @@ MAX_HOMOPOLYMER_THRESHOLD = 10
 MIN_REPEAT_UNIT = 2
 MAX_REPEAT_UNIT = 6
 MIN_REPEAT_COUNT = 4
+FEASIBILITY_THRESHOLD = 0.6
 
 
 def _gc_content(sequence: str) -> float:
@@ -61,7 +62,14 @@ def score_sequence(sequence: str) -> dict:
         penalty += 0.1 * len(repeats)
 
     score = max(0.0, min(1.0, 1.0 - penalty))
-    feasible = len(reasons) == 0
+    # feasible tracks the score against a threshold, not "any flag at
+    # all" -- a single minor flag (e.g. one incidental repeat region)
+    # used to zero out feasible regardless of how small its penalty was,
+    # so a sequence scoring 0.90 came back Rejected. reasons stays
+    # populated as advisory context either way. Found reviewing the
+    # final branch: the plan's own documented demo sequence hit exactly
+    # this (one repeat region, score 0.90, feasible: false).
+    feasible = score >= FEASIBILITY_THRESHOLD
 
     return {
         "score": round(score, 2),
