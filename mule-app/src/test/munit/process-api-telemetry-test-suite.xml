@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
+
+    <munit:config name="process-api-telemetry-test-suite.xml"/>
+
+    <munit:test name="running-event-advances-status-and-updates-progress">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="GET" attributeName="method"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[[{ status: "Feasible", progressPct: 0, promisedShipDate: "2026-09-10" }]]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="PATCH" attributeName="method"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[[{ updated: true }]]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "batch-1", progressPct: 40, event: "running", timestamp: "2026-08-24T10:00:00Z" }]'/>
+            </munit:set-event>
+            <flow-ref name="telemetry-consumer-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" withAttributeValue="#[{ attributeName: 'method', whereValue: 'PATCH' }]" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="stale-event-does-not-move-status-backward">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="GET" attributeName="method"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[[{ status: "Shipped", progressPct: 100, promisedShipDate: "2026-09-10" }]]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "batch-2", progressPct: 40, event: "running", timestamp: "2026-08-20T10:00:00Z" }]'/>
+            </munit:set-event>
+            <flow-ref name="telemetry-consumer-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" withAttributeValue="#[{ attributeName: 'method', whereValue: 'PATCH' }]" times="0"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="unknown-batch-id-dead-letters-after-lookup-miss">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="GET" attributeName="method"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:attributes value='#[{ statusCode: 404 }]'/>
+                    <munit-tools:payload value='#[output application/json --- { error: "not found" }]'/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="jms:publish"/>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "unknown-batch", progressPct: 10, event: "started", timestamp: "2026-08-24T10:00:00Z" }]'/>
+            </munit:set-event>
+            <flow-ref name="telemetry-consumer-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="jms:publish" withAttributeValue="#[{ attributeName: 'destination', whereValue: 'batch-telemetry-dlq' }]" times="1"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

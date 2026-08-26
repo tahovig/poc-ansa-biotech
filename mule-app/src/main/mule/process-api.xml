@@ -123,4 +123,64 @@ output application/json
         </error-handler>
     </flow>
 
+    <flow name="telemetry-consumer-flow">
+        <jms:listener config-ref="JMS_Config" destination="batch-telemetry"/>
+        <set-variable variableName="telemetry" value="#[payload]"/>
+
+        <http:request config-ref="SF_System_API_Request_Config" method="GET" path="/synthesis-orders/#[vars.telemetry.batchId]">
+            <http:response-validator>
+                <http:success-status-code-validator values="0..599"/>
+            </http:response-validator>
+        </http:request>
+
+        <choice>
+            <when expression="#[attributes.statusCode == 404]">
+                <jms:publish config-ref="JMS_Config" destination="batch-telemetry-dlq">
+                    <jms:message>
+                        <jms:body><![CDATA[#[vars.telemetry]]]></jms:body>
+                    </jms:message>
+                </jms:publish>
+            </when>
+            <otherwise>
+                <set-variable variableName="currentOrder" value="#[payload]"/>
+                <set-variable variableName="lifecycleRank" value='#[{
+                    "Submitted": 0, "Feasible": 1, "Rejected": 1,
+                    "In_Synthesis": 2, "QC": 3, "Shipped": 4, "At_Risk": 2
+                }]'/>
+                <set-variable variableName="eventStatusMap" value='#[{
+                    "started": "In_Synthesis", "running": "In_Synthesis",
+                    "qc_pass": "QC", "qc_fail": "QC", "shipped": "Shipped"
+                }]'/>
+                <set-variable variableName="candidateStatus" value="#[vars.eventStatusMap[vars.telemetry.event]]"/>
+                <set-variable variableName="isForwardMove"
+                    value="#[vars.lifecycleRank[vars.candidateStatus] >= vars.lifecycleRank[vars.currentOrder.status]]"/>
+
+                <choice>
+                    <when expression="#[vars.isForwardMove]">
+                        <set-variable variableName="daysElapsedRatio"
+                            value="#[if (vars.telemetry.progressPct == 0) 0 else (vars.telemetry.progressPct / 100)]"/>
+                        <set-variable variableName="projectedLate"
+                            value="#[(vars.telemetry.event == 'running') and (vars.telemetry.progressPct &lt; 50)]"/>
+                        <set-variable variableName="finalStatus"
+                            value="#[if (vars.projectedLate) 'At_Risk' else vars.candidateStatus]"/>
+                        <ee:transform>
+                            <ee:message>
+                                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: vars.finalStatus, progressPct: vars.telemetry.progressPct }]]></ee:set-payload>
+                            </ee:message>
+                        </ee:transform>
+                        <http:request config-ref="SF_System_API_Request_Config" method="PATCH" path="/synthesis-orders/#[vars.telemetry.batchId]">
+                            <http:body><![CDATA[#[payload]]]></http:body>
+                        </http:request>
+                    </when>
+                    <otherwise>
+                        <logger level="WARN" message="#['Ignoring stale/out-of-order telemetry for batch ' ++ vars.telemetry.batchId ++ ': event=' ++ vars.telemetry.event]"/>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+    </flow>
+
 </mule>
