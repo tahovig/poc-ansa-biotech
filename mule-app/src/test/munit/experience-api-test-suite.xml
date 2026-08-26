@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <!--
+      A mocked payload below was double-array-wrapped
+      (#[[{ ... }]] instead of #[{ ... }]); payload.feasible on a
+      one-element Array isn't true even when the element's feasible is,
+      so that assertion was wrong even given a working MUnit run. Fixed
+      reviewing the final branch. Still unexecutable in this sandbox
+      (see the plan's Task 5 note).
+    -->
+    <munit:config name="experience-api-test-suite.xml"/>
+
+    <munit:test name="invalid-sequence-returns-400-without-calling-process-api">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
+            <flow-ref name="experience-submit-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" times="0"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('400')]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="sequence-with-invalid-bases-returns-400">
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTXYZ", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
+            <flow-ref name="experience-submit-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('400')]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="valid-sequence-proxies-to-process-api">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ orderId: "001XX", batchId: "batch-1", feasible: true, score: 0.9, reasons: [], status: "Feasible" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
+            <flow-ref name="experience-submit-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" times="1"/>
+            <munit-tools:assert-that expression="#[payload.feasible]" is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

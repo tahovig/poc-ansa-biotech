@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
+
+    <!--
+      Mocked payloads were double-array-wrapped (#[[{ ... }]] instead of
+      #[{ ... }]); payload.feasible on a one-element Array isn't true
+      even when the element's feasible is, so these assertions were
+      wrong even given a working MUnit run. Fixed reviewing the final
+      branch. Still unexecutable in this sandbox (see the plan's Task 5
+      note).
+    -->
+    <munit:config name="process-api-order-test-suite.xml"/>
+
+    <munit:test name="feasible-order-writes-salesforce-before-publishing-to-queue">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/feasibility" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ score: 0.9, feasible: true, reasons: [], flags: {} }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/synthesis-orders" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ id: "001XX" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="jms:publish"/>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
+            <flow-ref name="process-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" withAttributeValue="#[{ attributeName: 'path', whereValue: '/synthesis-orders' }]" times="1"/>
+            <munit-tools:verify-call processor="jms:publish" times="1"/>
+            <munit-tools:assert-that expression="#[payload.feasible]" is="#[MunitTools::equalTo(true)]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="infeasible-order-does-not-publish-to-queue">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/feasibility" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ score: 0.2, feasible: false, reasons: ["High GC content"], flags: {} }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/synthesis-orders" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value='#[{ id: "001XX" }]' mediaType="application/json"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="jms:publish"/>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "GCGCGCGCGCGCGCGCGCGC", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
+            <flow-ref name="process-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="jms:publish" times="0"/>
+            <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('Rejected')]"/>
+        </munit:validation>
+    </munit:test>
+
+    <munit:test name="feasibility-service-timeout-returns-502-and-does-not-write-salesforce">
+        <munit:behavior>
+            <munit-tools:mock-when processor="http:request">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute whereValue="/feasibility" attributeName="path"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="HTTP:TIMEOUT"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
+            <flow-ref name="process-order-flow"/>
+        </munit:execution>
+        <munit:validation>
+            <munit-tools:verify-call processor="http:request" withAttributeValue="#[{ attributeName: 'path', whereValue: '/synthesis-orders' }]" times="0"/>
+            <munit-tools:assert-that expression="#[vars.httpStatus]" is="#[MunitTools::equalTo('502')]"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

@@ -1,0 +1,2 @@
+stomp.py==8.1.2
+pytest==8.2.0

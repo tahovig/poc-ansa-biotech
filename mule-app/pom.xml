@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.poc.ansa</groupId>
+    <artifactId>poc-ansa-biotech</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>mule-application</packaging>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <app.runtime>4.6.0</app.runtime>
+        <!--
+          Tried bumping this from the brief's 3.3.0 to 3.7.3 (the latest
+          version available for munit-runner, munit-tools, and
+          munit-maven-plugin alike on repository.mulesoft.org/releases,
+          bumped together to stay in lockstep) to test whether
+          munit-maven-plugin 3.3.0 wasn't hooking correctly into
+          mule-maven-plugin 4.10.1's packaging lifecycle. It did not help:
+          3.7.3 fails earlier and differently (a JPMS module conflict,
+          "Module reactor.core reads more than one module named
+          plexus.component.annotations", before the embedded container
+          even starts) rather than fixing the original silent
+          zero-tests-discovered problem. Reverted to 3.3.0, which is the
+          furthest-progressing combination found (clean deploy, but MUnit
+          still discovers zero tests for reasons undiagnosed from inside
+          this environment; see Task 5's report). Found while executing
+          Task 5.
+        -->
+        <munit.version>3.3.0</munit.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.mule.connectors</groupId>
+            <artifactId>mule-http-connector</artifactId>
+            <version>1.9.0</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.mule.connectors</groupId>
+            <artifactId>mule-jms-connector</artifactId>
+            <version>1.9.2</version>
+            <classifier>mule-plugin</classifier>
+        </dependency>
+        <!--
+          Originally artemis-jms-client-all (matching the Artemis broker
+          image in docker-compose.yml), but Mule's JMS connector's default
+          Connection Factory auto-detection is hardcoded to instantiate
+          org.apache.activemq.ActiveMQConnectionFactory specifically;
+          that class belongs to the classic ActiveMQ 5.x client
+          (activemq-client), not Artemis's own client library (whose
+          connection factory lives under a different package,
+          org.apache.activemq.artemis.jms.client). Artemis brokers support
+          the classic OpenWire protocol for exactly this kind of
+          compatibility, so the classic client still connects to the same
+          Artemis broker without any docker-compose change. Found
+          deploying Task 12's Docker stack (JmsMissingLibraryException:
+          ClassNotFoundException: org.apache.activemq.ActiveMQConnectionFactory).
+        -->
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>activemq-client</artifactId>
+            <version>5.18.3</version>
+        </dependency>
+        <!--
+          mule-java-module (needed for java:invoke-static to run
+          JwtSigner.java) was removed entirely while executing Task 12: no
+          publicly-resolvable version is compatible with this Mule 4.6.0
+          standalone runtime for real deployment (every version new enough
+          for Java 17 declares a JavaVersion.JAVA_25 enum constant this
+          runtime's bundled mule-sdk-api 0.8.0 doesn't have; patching the
+          runtime's own sdk-api to add JAVA_25 support breaks its EE/
+          DataWeave module registration instead, confirmed empirically,
+          no version threads the needle. JWT signing moved out of Mule
+          entirely into the small dedicated sfdc-auth Python service
+          (services/sfdc-auth/), reusing the JWT logic already verified
+          working in Task 2. Mule now just calls that service over plain
+          HTTP (see salesforce-system-api.xml and global-config.xml's
+          SFDC_Auth_Request_Config), the same pattern as every other
+          System API call in this app, no custom Mule extension
+          involved, so this class of runtime/SDK version conflict can't
+          recur. JwtSigner.java and src/main/java/ were deleted.
+        -->
+        <dependency>
+            <groupId>com.mulesoft.munit</groupId>
+            <artifactId>munit-runner</artifactId>
+            <version>${munit.version}</version>
+            <classifier>mule-plugin</classifier>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.mulesoft.munit</groupId>
+            <artifactId>munit-tools</artifactId>
+            <version>${munit.version}</version>
+            <classifier>mule-plugin</classifier>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+              Bumped from the brief's 4.2.0. That version's process-classes
+              goal crashes with EnumConstantNotPresentException:
+              JavaVersion.JAVA_25 as soon as the project has any
+              src/main/java sources (JwtSigner.java here) on this JDK,
+              regardless of which mule-java-module version is used;
+              tried both 1.2.18 and 2.0.6, same crash either way, so it is
+              this plugin's own tooling, not the java-module dependency.
+              Bumped to the latest available release to pick up a fix.
+              Found while executing Task 5.
+            -->
+            <plugin>
+                <groupId>org.mule.tools.maven</groupId>
+                <artifactId>mule-maven-plugin</artifactId>
+                <!--
+                  4.10.1 originally caused deploy-time AST mismatches
+                  against this Mule 4.6.0 runtime (a SUB_FLOW enum constant
+                  the runtime doesn't have, an "encoding" parameter on
+                  <configuration-properties> it doesn't recognize),
+                  found while debugging Task 12's Docker deploy. Both were
+                  fixed at the content level instead of by changing this
+                  plugin version: see salesforce-system-api.xml's comment
+                  on dropping its source-less sub-flow/flow-ref, and
+                  global-config.xml's on dropping <configuration-properties>
+                  (see that file's comment for the full property-resolution
+                  story, including why plain ${key} with no default ended
+                  up the final form). A
+                  version-matched 4.6.0 release of this plugin was tried
+                  as an alternative fix, but its own build-time dependency
+                  graph requires org.raml:raml-parser-2-bom, which is only
+                  resolvable from an internal MuleSoft host
+                  (repository-master.mulesoft.org) not reachable from this
+                  environment, confirmed by testing directly, both online
+                  and with -o against the local cache. Reverted to 4.10.1,
+                  which resolves cleanly from this project's public
+                  repositories and, with the content-level AST fixes above
+                  in place, is the version actually verified working end
+                  to end in Task 12.
+                -->
+                <version>4.10.1</version>
+                <extensions>true</extensions>
+                <!--
+                  activemq-client is a plain jar dependency, not a
+                  mule-plugin, so Mule's classloader isolation hides its
+                  classes from the JMS connector by default. Deploy failed
+                  with JmsMissingLibraryException: ClassNotFoundException:
+                  org.apache.activemq.ActiveMQConnectionFactory until this
+                  was declared as a shared library both here (this plugin's
+                  own <configuration><sharedLibraries> element) and
+                  directly in mule-artifact.json's
+                  classLoaderModelLoaderDescriptor.attributes.sharedLibraries;
+                  declaring it in only one of the two places was
+                  insufficient in testing, both were needed together.
+                  Never caught by `mvn package` alone, since that doesn't
+                  exercise the runtime's classloader isolation the way an
+                  actual deploy does; found deploying Task 12's Docker
+                  stack.
+                -->
+                <configuration>
+                    <sharedLibraries>
+                        <sharedLibrary>
+                            <groupId>org.apache.activemq</groupId>
+                            <artifactId>activemq-client</artifactId>
+                        </sharedLibrary>
+                    </sharedLibraries>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.mulesoft.munit.tools</groupId>
+                <artifactId>munit-maven-plugin</artifactId>
+                <version>${munit.version}</version>
+                <executions>
+                    <execution>
+                        <id>test</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                            <goal>coverage-report</goal>
+                        </goals>
+                        <configuration>
+                            <munitTests>
+                                <munitTest>**/*-test-suite.xml</munitTest>
+                            </munitTests>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!--
+              The mule-application packaging's default lifecycle still binds
+              a plain maven-surefire-plugin "default-test" execution to the
+              test phase (for projects with Java-based unit tests under
+              src/test/java; this project has none, src/main/java itself
+              was removed in Task 12, see the pom's former mule-java-module
+              dependency comment. With no Java test sources that execution
+              is normally a harmless no-op, but
+              `-Dtest=<suite-name>` on the command line (per this task's run
+              command) is a generic Surefire filter property that this
+              unrelated execution also picks up and then fails on ("No tests
+              matching pattern"), aborting the build before the
+              munit-maven-plugin execution above ever runs. Telling it not
+              to fail when a -Dtest filter matches nothing keeps it a no-op
+              as intended. (Found while executing Task 5 the first time;
+              still needed after the Salesforce-connector-to-REST rewrite.)
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <repositories>
+        <repository>
+            <id>anypoint-exchange-v3</id>
+            <name>Anypoint Exchange</name>
+            <url>https://maven.anypoint.mulesoft.com/api/v3/maven</url>
+        </repository>
+        <!--
+          The brief's Step 2 only lists mulesoft-releases as a
+          pluginRepository, but munit-runner/munit-tools (regular
+          test-scoped dependencies, not plugins) 3.3.0 only resolve
+          anonymously from repository.mulesoft.org/releases, not from
+          anypoint-exchange-v3 (confirmed by probing both directly). Found
+          while executing Task 5 the first time; still needed.
+        -->
+        <repository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <url>https://repository.mulesoft.org/releases/</url>
+        </repository>
+    </repositories>
+    <pluginRepositories>
+        <pluginRepository>
+            <id>mulesoft-releases</id>
+            <name>MuleSoft Releases Repository</name>
+            <url>https://repository.mulesoft.org/releases/</url>
+        </pluginRepository>
+    </pluginRepositories>
+</project>

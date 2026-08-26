@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; margin: 2rem; }
+table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+th, td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+.badge { padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; }
+.badge-success { background: #d4edda; color: #155724; }
+.badge-warning { background: #fff3cd; color: #856404; }
+.badge-danger { background: #f8d7da; color: #721c24; }
+.badge-neutral { background: #e2e3e5; color: #383d41; }

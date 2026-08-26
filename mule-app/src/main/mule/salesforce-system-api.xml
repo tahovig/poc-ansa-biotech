@@ -1,0 +1,246 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <!--
+      Token fetch is one plain http:request to the sfdc-auth service (see
+      global-config.xml's SFDC_Auth_Request_Config comment for why JWT
+      signing moved out of Mule entirely). It's duplicated inline in all
+      four flows below rather than factored into a shared sub-flow: a
+      flow-ref to a source-less flow was the one AST-rehydration pattern
+      that broke this toolchain's deploy earlier in Task 12 (see git
+      history), so the duplication stays even now that the block is much
+      smaller. Keep all four copies identical if you touch one.
+
+      Every DataWeave transform in this file uses plain core
+      <set-payload>/<set-variable> with an inline #[%dw 2.0 ...] expression
+      instead of <ee:transform>. Discovered while deploying Task 12's
+      Docker stack: this standalone runtime distribution has the DataWeave
+      evaluation engine (needed for every #[...] expression, so it's
+      always been working) but not the separate "ee" XML module that backs
+      the <ee:transform>/<ee:message>/<ee:variables> components
+      specifically, confirmed by finding no mule-ee.xsd anywhere in the
+      distribution's jars. Every transform in this app is expressible with
+      core elements alone, so the ee: namespace and its dependency on that
+      module are avoided entirely rather than chasing a Maven coordinate
+      for it. XML attribute values in this file use single quotes as the
+      delimiter throughout, so the two SOQL-building expressions (which
+      embed literal single quotes as SOQL string-literal syntax) escape
+      those specific characters as &apos;, the DataWeave content itself
+      is otherwise unchanged.
+    -->
+
+    <!--
+      No response/error-response override, and no error-handler, existed
+      on any flow in this file except sf-get-order-by-batch-flow: a
+      Salesforce 400 (bad accountId, a validation rule, an FLS gap) on
+      any of the other three propagated as a bare, unhandled Mule 500
+      with no useful body. Found reviewing the final branch. All three
+      now wire httpStatus the same way sf-get-order-by-batch-flow
+      already did, plus an error-handler mapping the Salesforce-call
+      failure types to a real error body instead of an opaque 500.
+    -->
+    <flow name="sf-create-order-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="POST">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+        </http:listener>
+        <set-payload value='#[%dw 2.0
+output application/json
+---
+{
+    Name: payload.name,
+    Account__c: payload.accountId,
+    Sequence__c: payload.sequence,
+    Length_bp__c: payload.lengthBp,
+    Status__c: payload.status,
+    Feasibility_Score__c: payload.feasibilityScore default null,
+    Rejection_Reason__c: payload.rejectionReason default null,
+    Promised_Ship_Date__c: payload.promisedShipDate default null,
+    Batch_Id__c: payload.batchId
+}]'/>
+        <set-variable variableName="recordPayload" value="#[payload]"/>
+
+        <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/data/v60.0/sobjects/Synthesis_Order__c">
+            <http:body><![CDATA[#[output application/json --- vars.recordPayload]]]></http:body>
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+        </http:request>
+
+        <set-payload value='#[%dw 2.0
+output application/json
+---
+{ id: payload.id }]'/>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "salesforce create failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <flow name="sf-get-orders-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+        </http:listener>
+
+        <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <set-variable variableName="soql" value='#[%dw 2.0
+output text/plain
+---
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c ORDER BY CreatedDate DESC"]'/>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
+        <set-payload value='#[%dw 2.0
+output application/json
+---
+payload.records map (order) -> {
+    id: order.Id,
+    name: order.Name,
+    status: order.Status__c,
+    feasibilityScore: order.Feasibility_Score__c,
+    progressPct: order.Progress_Pct__c,
+    batchId: order.Batch_Id__c,
+    promisedShipDate: order.Promised_Ship_Date__c
+}]'/>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "salesforce query failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <!--
+      GET and PATCH share this one listener/flow rather than two separate
+      <http:listener> elements on the identical path template
+      "/synthesis-orders/{batchId}" differentiated only by allowedMethods
+      (the original shape, one flow per method): found running Task 12's
+      end-to-end demo that this runtime does not populate
+      attributes.uriParams.batchId at all for either listener when two
+      listeners share one path template that way; both returned a null
+      batchId (confirmed with direct curl GET and PATCH tests, plain 500s
+      from the SOQL string concatenation hitting a null). A single
+      listener with allowedMethods="GET,PATCH" and a method <choice>
+      does not hit whatever router ambiguity that was.
+
+      Separately (also found chasing that same 500): "attributes" is not
+      stable across a flow, it's replaced by the response attributes of
+      every <http:request> the flow makes. Reading attributes.uriParams
+      or attributes.method AFTER the token-fetch/SOQL http:request calls
+      below reads THOSE calls' HttpResponseAttributes, not the original
+      inbound listener's HttpRequestAttributes, so both batchId and
+      method were silently wrong even after the listener merge above.
+      batchId/method are captured into vars immediately after the
+      listener, before any http:request in this flow can overwrite
+      attributes.
+    -->
+    <flow name="sf-get-order-by-batch-flow">
+        <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders/{batchId}" allowedMethods="GET, PATCH">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 502]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+        </http:listener>
+        <set-variable variableName="requestBody" value="#[payload]"/>
+        <set-variable variableName="batchId" value="#[attributes.uriParams.batchId]"/>
+        <set-variable variableName="requestMethod" value="#[attributes.method]"/>
+
+        <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <!--
+          Backslash must be escaped before the quote, not after: escaping
+          "'" -> "\'" alone still lets an attacker-supplied backslash
+          immediately before a quote produce "\\'" in the output, which
+          SOQL reads as one literal backslash followed by a closing
+          quote; the string closes early and whatever follows becomes
+          query syntax. Found reviewing the final branch (never
+          exercised in practice: every real batchId is a UUID, no quotes
+          or backslashes involved).
+        -->
+        <set-variable variableName="soql" value='#[%dw 2.0
+output text/plain
+var safeBatchId = (vars.batchId replace "\\" with "\\\\") replace "&apos;" with "\\&apos;"
+---
+"SELECT Id, Name, Status__c, Feasibility_Score__c, Progress_Pct__c, Batch_Id__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
+        <choice>
+            <when expression="#[sizeOf(payload.records) == 0]">
+                <set-variable variableName="httpStatus" value="404"/>
+                <set-payload value='#[output application/json --- { error: "order not found for batchId " ++ vars.batchId }]'/>
+            </when>
+            <otherwise>
+                <set-variable variableName="recordId" value="#[payload.records[0].Id]"/>
+                <choice>
+                    <when expression="#[vars.requestMethod == 'PATCH']">
+                        <set-payload value='#[%dw 2.0
+output application/json
+var body = vars.requestBody
+---
+{
+    (Status__c: body.status) if (body.status?),
+    (Progress_Pct__c: body.progressPct) if (body.progressPct?),
+    (Feasibility_Score__c: body.feasibilityScore) if (body.feasibilityScore?),
+    (Rejection_Reason__c: body.rejectionReason) if (body.rejectionReason?)
+}]'/>
+                        <http:request config-ref="SFDC_Request_Config" method="PATCH" path="#['/services/data/v60.0/sobjects/Synthesis_Order__c/' ++ vars.recordId]">
+                            <http:body><![CDATA[#[payload]]]></http:body>
+                            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+                        </http:request>
+                        <!-- Salesforce REST PATCH returns 204 No Content on success;
+                             don't try to read a body from it, just overwrite payload directly. -->
+                        <set-payload value='#[output application/json --- { updated: true }]'/>
+                    </when>
+                    <otherwise>
+                        <set-payload value='#[%dw 2.0
+output application/json
+var order = payload.records[0]
+---
+{
+    id: order.Id,
+    name: order.Name,
+    status: order.Status__c,
+    feasibilityScore: order.Feasibility_Score__c,
+    progressPct: order.Progress_Pct__c,
+    batchId: order.Batch_Id__c,
+    promisedShipDate: order.Promised_Ship_Date__c
+}]'/>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "salesforce request failed" }]'/>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+</mule>

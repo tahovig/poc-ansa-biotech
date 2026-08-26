@@ -1,0 +1,10 @@
+.env
+keys/
+*.log
+target/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+salesforce/.sf/
+salesforce/.sfdx/

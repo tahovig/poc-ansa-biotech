@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
+
+    <!--
+      Every DataWeave transform in this file uses plain core
+      <set-payload> with an inline #[%dw 2.0 ...] expression instead of
+      <ee:transform>, since this runtime distribution doesn't bundle the
+      separate "ee" XML module those components need. See
+      salesforce-system-api.xml's comment for the full finding (Task 12).
+    -->
+
+    <flow name="process-order-flow">
+        <http:listener config-ref="Process_API_Listener_Config" path="/orders" allowedMethods="POST">
+            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+        </http:listener>
+
+        <set-variable variableName="orderPayload" value="#[payload]"/>
+        <set-variable variableName="batchId" value="#[uuid()]"/>
+
+        <http:request config-ref="Feasibility_System_API_Request_Config" method="POST" path="/feasibility">
+            <http:body><![CDATA[#[output application/json --- { sequence: vars.orderPayload.sequence }]]]></http:body>
+        </http:request>
+        <set-variable variableName="feasibilityResult" value="#[payload]"/>
+
+        <choice>
+            <when expression="#[vars.feasibilityResult.feasible]">
+                <set-payload value='#[%dw 2.0
+output application/json
+var order = vars.orderPayload
+var result = vars.feasibilityResult
+---
+{
+    name: "ORD-" ++ vars.batchId[0 to 7],
+    accountId: order.accountId,
+    sequence: order.sequence,
+    lengthBp: sizeOf(order.sequence),
+    status: "Feasible",
+    feasibilityScore: result.score,
+    promisedShipDate: order.requestedShipDate,
+    batchId: vars.batchId
+}]'/>
+                <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
+                    <http:body><![CDATA[#[payload]]]></http:body>
+                </http:request>
+                <set-variable variableName="orderId" value="#[payload.id]"/>
+
+                <jms:publish config-ref="JMS_Config" destination="synthesis-jobs">
+                    <jms:message>
+                        <jms:body><![CDATA[#[output application/json --- { batchId: vars.batchId, orderId: vars.orderId, requestedShipDate: vars.orderPayload.requestedShipDate }]]]></jms:body>
+                    </jms:message>
+                </jms:publish>
+
+                <set-payload value='#[%dw 2.0
+output application/json
+---
+{
+    orderId: vars.orderId,
+    batchId: vars.batchId,
+    feasible: true,
+    score: vars.feasibilityResult.score,
+    reasons: vars.feasibilityResult.reasons,
+    status: "Feasible"
+}]'/>
+            </when>
+            <otherwise>
+                <set-payload value='#[%dw 2.0
+output application/json
+var order = vars.orderPayload
+var result = vars.feasibilityResult
+---
+{
+    name: "ORD-" ++ vars.batchId[0 to 7],
+    accountId: order.accountId,
+    sequence: order.sequence,
+    lengthBp: sizeOf(order.sequence),
+    status: "Rejected",
+    feasibilityScore: result.score,
+    rejectionReason: result.reasons joinBy ", ",
+    promisedShipDate: order.requestedShipDate,
+    batchId: vars.batchId
+}]'/>
+                <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
+                    <http:body><![CDATA[#[payload]]]></http:body>
+                </http:request>
+                <set-payload value='#[%dw 2.0
+output application/json
+---
+{
+    batchId: vars.batchId,
+    feasible: false,
+    score: vars.feasibilityResult.score,
+    reasons: vars.feasibilityResult.reasons,
+    status: "Rejected"
+}]'/>
+            </otherwise>
+        </choice>
+
+        <!--
+          Broadened from HTTP:TIMEOUT, HTTP:CONNECTIVITY only: those two
+          cover the feasibility call failing to connect, but not a
+          Salesforce write returning a real error response (e.g. a bad
+          accountId), which propagated as a bare, unhandled Mule 500.
+          Found reviewing the final branch. The message stays generic
+          ("order submission failed") rather than naming which upstream
+          call failed, since both the feasibility call and the
+          Salesforce write can raise these same error types and this
+          flow doesn't track which step was in progress.
+        -->
+        <error-handler>
+            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "order submission failed: an upstream service was unavailable or rejected the request" }]'/>
+            </on-error-propagate>
+        </error-handler>
+    </flow>
+
+    <flow name="telemetry-consumer-flow">
+        <jms:listener config-ref="JMS_Config" destination="batch-telemetry"/>
+        <!--
+          The simulator (a plain STOMP client, not a Mule/JMS producer)
+          sends a JMS message with no recognized content type, so Mule's
+          JMS listener hands it to the flow as raw Binary rather than an
+          already-parsed application/json payload; #[payload] alone left
+          vars.telemetry as that Binary, and any field access on it
+          (vars.telemetry.event, .batchId, ...) failed with "Value
+          Selector" errors, sending every message straight to the DLQ.
+          Found running Task 12's end-to-end demo. read() with an
+          explicit mimeType parses it regardless of what content type (if
+          any) the message arrived with.
+        -->
+        <set-variable variableName="telemetry" value="#[read(payload, 'application/json')]"/>
+
+        <!--
+          This used to call back into this app's own SF System API
+          (GET/PATCH SF_System_API_Request_Config's "/synthesis-orders/
+          {batchId}") to look up and update the order by batch. Found
+          running Task 12's end-to-end demo: that self-referencing HTTP
+          hop (this flow, over HTTP, back into a listener this SAME
+          Mule instance is also serving on the same port) consistently
+          returned sf-get-orders-flow's full-list response instead of
+          sf-get-order-by-batch-flow's single-record one, no matter how
+          correct the interpolated path was (confirmed correct via a
+          logger right before the call, and confirmed the identical URL
+          worked correctly over a real external curl to the same port).
+          Never tracked down which layer picks the wrong listener for a
+          same-process loopback call; querying Salesforce directly here
+          (the same SOQL/PATCH pattern salesforce-system-api.xml's
+          sf-get-order-by-batch-flow already uses) sidesteps it rather
+          than chasing it further, and cuts an unnecessary hop besides.
+        -->
+        <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <!--
+          Backslash escaped before the quote, not after; see
+          salesforce-system-api.xml's matching comment for why escaping
+          "'" alone is still injectable.
+        -->
+        <set-variable variableName="soql" value='#[%dw 2.0
+output text/plain
+var safeBatchId = (vars.telemetry.batchId replace "\\" with "\\\\") replace "&apos;" with "\\&apos;"
+---
+"SELECT Id, Status__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
+        </http:request>
+
+        <choice>
+            <when expression="#[sizeOf(payload.records) == 0]">
+                <jms:publish config-ref="JMS_Config" destination="batch-telemetry-dlq">
+                    <jms:message>
+                        <jms:body><![CDATA[#[write(vars.telemetry, 'application/json')]]]></jms:body>
+                    </jms:message>
+                </jms:publish>
+            </when>
+            <otherwise>
+                <set-variable variableName="currentOrder" value="#[payload.records[0]]"/>
+                <set-variable variableName="lifecycleRank" value='#[{
+                    "Submitted": 0, "Feasible": 1, "Rejected": 1,
+                    "In_Synthesis": 2, "QC": 3, "Shipped": 4, "At_Risk": 2
+                }]'/>
+                <set-variable variableName="eventStatusMap" value='#[{
+                    "started": "In_Synthesis", "running": "In_Synthesis",
+                    "qc_pass": "QC", "qc_fail": "QC", "shipped": "Shipped"
+                }]'/>
+                <set-variable variableName="candidateStatus" value="#[vars.eventStatusMap[vars.telemetry.event]]"/>
+                <!--
+                  Needs an explicit output type: this plain #[...] form
+                  (no %dw 2.0 header) can't always infer one on its own
+                  when the values on either side of the comparison came
+                  from differently-typed sources (lifecycleRank is a DW
+                  object literal, currentOrder.Status__c came off a
+                  parsed Salesforce JSON response); found running Task
+                  12's end-to-end demo: "Unable to infer a output media
+                  type as more than one is being used: application/java,
+                  application/json".
+                -->
+                <set-variable variableName="isForwardMove"
+                    value='#[%dw 2.0
+output application/java
+---
+vars.lifecycleRank[vars.candidateStatus] >= vars.lifecycleRank[vars.currentOrder.Status__c]]'/>
+
+                <choice>
+                    <when expression="#[vars.isForwardMove]">
+                        <!--
+                          Was progressPct < 50 alone, with no reference
+                          to Promised_Ship_Date__c at all; the spec
+                          calls for projecting against time remaining to
+                          that date, but this ignored it completely, so
+                          every order flipped to At_Risk at the first
+                          "running" tick (25%) regardless of how much
+                          slack was left before the promised date, then
+                          back to In_Synthesis at 50%, unconditionally,
+                          every run. Found reviewing the final branch.
+                          Now: only projected late if we're already
+                          within 3 days of the promised date (or past
+                          it) AND still under 50%; a real, if simple,
+                          reading of "current progress rate vs. time
+                          remaining" given this data model has no
+                          synthesis-start timestamp to compute a true
+                          elapsed-time ratio from.
+                        -->
+                        <set-variable variableName="projectedLate"
+                            value='#[%dw 2.0
+output application/java
+var promisedShipDate = vars.currentOrder.Promised_Ship_Date__c
+---
+if (promisedShipDate == null) false
+else (vars.telemetry.event == "running")
+    and (vars.telemetry.progressPct &lt; 50)
+    and ((now() as Date) &gt;= ((promisedShipDate as Date) - |P3D|))]'/>
+                        <set-variable variableName="finalStatus"
+                            value="#[if (vars.projectedLate) 'At_Risk' else vars.candidateStatus]"/>
+                        <set-payload value='#[%dw 2.0
+output application/json
+---
+{ Status__c: vars.finalStatus, Progress_Pct__c: vars.telemetry.progressPct }]'/>
+                        <http:request config-ref="SFDC_Request_Config" method="PATCH" path="#['/services/data/v60.0/sobjects/Synthesis_Order__c/' ++ vars.currentOrder.Id]">
+                            <http:body><![CDATA[#[payload]]]></http:body>
+                            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
+                        </http:request>
+                    </when>
+                    <otherwise>
+                        <logger level="WARN" message="#['Ignoring stale/out-of-order telemetry for batch ' ++ vars.telemetry.batchId ++ ': event=' ++ vars.telemetry.event]"/>
+                    </otherwise>
+                </choice>
+            </otherwise>
+        </choice>
+
+        <!--
+          No error-handler existed at all: a Salesforce failure on
+          either http:request above (query or PATCH) left JMS ack/
+          redelivery semantics completely undefined, risking an
+          infinite redelivery loop on a persistently-failing message
+          (e.g. a permanently-malformed telemetry event). Found
+          reviewing the final branch. on-error-continue here lets the
+          flow finish "successfully" from the JMS listener's point of
+          view (so the message acks and doesn't redeliver) while still
+          preserving the event for inspection, same DLQ the
+          lookup-miss case above already uses.
+        -->
+        <error-handler>
+            <on-error-continue type="ANY">
+                <logger level="ERROR" message="#['Telemetry processing failed for batch ' ++ (vars.telemetry.batchId default 'unknown') ++ ': ' ++ error.description]"/>
+                <jms:publish config-ref="JMS_Config" destination="batch-telemetry-dlq">
+                    <jms:message>
+                        <jms:body><![CDATA[#[write(vars.telemetry default {}, 'application/json')]]]></jms:body>
+                    </jms:message>
+                </jms:publish>
+            </on-error-continue>
+        </error-handler>
+    </flow>
+
+</mule>
