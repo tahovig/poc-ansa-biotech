@@ -13,6 +13,9 @@
     <flow name="process-order-flow">
         <http:listener config-ref="Process_API_Listener_Config" path="/orders" allowedMethods="POST">
             <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
         </http:listener>
 
         <set-variable variableName="orderPayload" value="#[payload]"/>
