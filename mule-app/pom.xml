@@ -58,6 +58,60 @@
         <dependency>
             <groupId>org.mule.module</groupId>
             <artifactId>mule-java-module</artifactId>
+            <!--
+              Version-hunted extensively while executing Task 12 to find a
+              release of this connector that both builds AND deploys inside
+              the real Mule 4.6.0 standalone runtime:
+                - 1.2.18 (brief's nearest-valid-release from Task 5): builds
+                  fine, but deploy throws EnumConstantNotPresentException:
+                  org.mule.sdk.api.meta.JavaVersion.JAVA_25 (its extension
+                  model declares JAVA_25 as a supported Java version in its
+                  bundled annotation metadata, but the mule-sdk-api actually
+                  loaded by the runtime's core classloader at deploy time
+                  predates that enum constant, so reflectively reading the
+                  annotation throws).
+                - 1.2.15/1.2.16 don't even resolve: their POMs depend on
+                  org.springframework:spring-core:5.3.39-spring-framework-5.3.45,
+                  an internal MuleSoft-forked version string not published
+                  on any repository this project can reach (confirmed 404 on
+                  both repository.mulesoft.org/releases and
+                  anypoint-exchange-v3).
+                - 1.2.13, the newest release still on a plain published
+                  spring-core (5.3.33), resolves and builds, but deploy fails
+                  differently: "Can't resolve .../mule-ee.xsd" plus a
+                  suppressed "No enum constant ...ComponentType.SUB_FLOW"
+                  (its jar bundles mule-sdk-api 0.7.0 / mule-extensions-api
+                  1.5.0, both older than what the 4.6.0 runtime's own config
+                  parser uses (1.6.0 / mule-artifact-ast-serialization
+                  1.2.0), clashing with app-wide XML parsing for every
+                  config file, not just the one using java:invoke-static).
+                - 1.2.10 avoids both of the above but is rejected outright:
+                  JavaVersionNotSupportedByExtensionException, "Supported
+                  versions are: [1.8, 11]" (no 17, and this runtime's JRE is
+                  17).
+              No publicly-resolvable version threads this needle, so stayed
+              on 1.2.18 (verified the closest to a clean deploy of all of
+              the above). Also tried fixing the JAVA_25 problem at what
+              looked like its root: the 4.6.0 distribution's own bundled
+              mule-sdk-api (0.8.0, confirmed via its JavaVersion.class:
+              only JAVA_8/11/17) predates that enum constant, and swapping
+              in a newer mule-sdk-api release that has it (tried both
+              1.0.0, the earliest with JAVA_25, and 1.2.0, the latest) does
+              make that specific exception go away. But it trades it for a
+              worse one: empirically (confirmed by toggling only this one
+              change, everything else held fixed), doing so breaks the
+              distribution's own EE transform module's schema
+              registration, so deploy then fails on the first config file
+              using ee:transform (nearly every file in this app) instead of
+              the one using java:invoke-static. No sdk-api version
+              satisfies both: every release with JAVA_25 breaks EE
+              registration, and every release that doesn't predates
+              JAVA_25. Left mule-app/Dockerfile NOT patching sdk-api as a
+              result: JAVA_25 (blocking java:invoke, i.e. this app's whole
+              Salesforce JWT auth path) remains the app's current,
+              unresolved deploy blocker on this runtime; see Task 12's
+              report for the full diagnostic trail and what's ruled out.
+            -->
             <version>1.2.18</version>
             <classifier>mule-plugin</classifier>
         </dependency>
@@ -93,7 +147,42 @@
             <plugin>
                 <groupId>org.mule.tools.maven</groupId>
                 <artifactId>mule-maven-plugin</artifactId>
-                <version>4.10.1</version>
+                <!--
+                  4.10.1 (the version bumped to in order to get past a
+                  build-time crash in the brief's original 4.2.0, see
+                  below) builds fine, but its generated
+                  META-INF/mule-artifact/artifact.ast doesn't match this
+                  Mule 4.6.0 runtime's own component/parameter models at
+                  deploy time in several different ways (a SUB_FLOW enum
+                  constant the runtime doesn't have, an "encoding" parameter
+                  on <configuration-properties> it doesn't recognize, and
+                  further unresolvable nested models beyond that), found
+                  while debugging Task 12's Docker deploy; setting
+                  runtimeVersion/skipValidation didn't change what it
+                  embeds. mule-maven-plugin 4.6.0 exists as an exact
+                  version-matched release for this runtime, on the theory
+                  it'd generate an AST format the runtime actually
+                  understands. (The SUB_FLOW and "encoding" problems above
+                  were actually fixed separately, at the content level,
+                  before this plugin version was even tried: see
+                  salesforce-system-api.xml's comment on dropping its
+                  source-less sub-flow/flow-ref, and global-config.xml's on
+                  dropping <configuration-properties>. Whether 4.6.0 alone,
+                  without those content changes, would also have avoided
+                  those two specific errors was never isolated; left as an
+                  open question, and the content changes are correct to
+                  keep regardless of plugin version.) This plugin bump does
+                  NOT fix the
+                  deeper, still-unresolved mule-java-module/mule-sdk-api
+                  conflict described in that dependency's own comment above:
+                  deploy currently fails there before ever reaching this
+                  plugin's AST at all, so whether 4.6.0 fully resolves the
+                  AST-format mismatch on its own is unconfirmed beyond that
+                  point. Left at 4.6.0 regardless since it's the more
+                  defensible choice (version-matched to the runtime) once
+                  the java-module blocker is resolved.
+                -->
+                <version>4.6.0</version>
                 <extensions>true</extensions>
             </plugin>
             <plugin>

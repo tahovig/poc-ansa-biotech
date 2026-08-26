@@ -13,3 +13,43 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  feasibility:
+    build: ./services/feasibility
+    ports:
+      - "5001:5001"
+
+  mule-app:
+    build: ./mule-app
+    env_file: .env
+    depends_on:
+      activemq:
+        condition: service_healthy
+      feasibility:
+        condition: service_started
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+      - "8083:8083"
+      - "8084:8084"
+
+  instrument-simulator:
+    build: ./services/instrument-simulator
+    environment:
+      ACTIVEMQ_STOMP_HOST: activemq
+      ACTIVEMQ_STOMP_PORT: "61613"
+      SIMULATOR_TICK_SECONDS: "2"
+    depends_on:
+      activemq:
+        condition: service_healthy
+
+  dashboard:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - ./dashboard:/app
+    command: python -m http.server 8090
+    ports:
+      - "8090:8090"
+    depends_on:
+      - mule-app

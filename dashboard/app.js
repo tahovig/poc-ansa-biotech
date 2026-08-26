@@ -1,3 +1,5 @@
+const EXPERIENCE_API_BASE = 'http://localhost:8081';
+
 function statusBadgeClass(status) {
   const map = {
     At_Risk: 'badge badge-warning',
@@ -20,7 +22,7 @@ function formatOrderRow(order) {
 }
 
 async function fetchOrders() {
-  const res = await fetch('/api/orders');
+  const res = await fetch(`${EXPERIENCE_API_BASE}/orders`);
   if (!res.ok) throw new Error('failed to fetch orders');
   return res.json();
 }
@@ -39,7 +41,7 @@ async function submitOrder(event) {
     accountId: form.accountId.value.trim(),
     requestedShipDate: form.requestedShipDate.value,
   };
-  const res = await fetch('/api/orders', {
+  const res = await fetch(`${EXPERIENCE_API_BASE}/orders`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -10,27 +10,27 @@
         http://www.mulesoft.org/schema/mule/java http://www.mulesoft.org/schema/mule/java/current/mule-java.xsd
         http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
 
-    <sub-flow name="get-sfdc-access-token-flow">
-        <java:invoke-static class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
-            <java:args><![CDATA[#[{
-                arg0: p('sfdc.consumer.key'),
-                arg1: p('sfdc.username'),
-                arg2: p('sfdc.jwt.audience'),
-                arg3: p('sfdc.jwt.keystore.path'),
-                arg4: p('sfdc.jwt.keystore.password'),
-                arg5: p('sfdc.jwt.key.alias')
-            }]]]></java:args>
-        </java:invoke-static>
-        <set-variable variableName="jwtAssertion" value="#[payload]"/>
-        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
-            <http:body><![CDATA[#[output application/x-www-form-urlencoded
----
-{
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion: vars.jwtAssertion
-}]]]></http:body>
-        </http:request>
-    </sub-flow>
+    <!--
+      The JWT-token-fetch block below (java:invoke-static + set-variable +
+      http:request) is duplicated inline in all four flows in this file
+      instead of living once in a shared sub-flow/flow called via flow-ref
+      (the original, DRYer design, and what a sub-flow briefly became before
+      this fix, see git history). Changed while debugging Task 12's
+      Docker deploy: this file's deploy failed with a
+      NoSuchElementException ("No value present") deep in
+      ComponentAstDTO.resolveNestedModel while rehydrating
+      META-INF/mule-artifact/artifact.ast, reproduced identically across
+      both mule-maven-plugin 4.10.1 and the exact version-matched 4.6.0
+      (so it isn't a plugin-version mismatch, unlike the SUB_FLOW/encoding
+      issues fixed earlier for this same file). Bisecting the file's AST
+      structure against the app's other flows (none of which hit this)
+      turned up one thing unique to this file: a flow-ref to a flow with no
+      message source (get-sfdc-access-token-flow), the only such
+      source-less flow-ref pattern anywhere in this app. Duplicating the
+      block inline removes that pattern entirely and resolved the deploy
+      failure; the four copies stay byte-for-byte identical to keep them in
+      sync if ever reunified once a fixed toolchain makes that safe again.
+    -->
 
     <flow name="sf-create-order-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="POST"/>
@@ -54,7 +54,25 @@ output application/json
         </ee:transform>
         <set-variable variableName="recordPayload" value="#[payload]"/>
 
-        <flow-ref name="get-sfdc-access-token-flow"/>
+        <java:invoke-static class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
+            <java:args><![CDATA[#[{
+                arg0: p('sfdc.consumer.key'),
+                arg1: p('sfdc.username'),
+                arg2: p('sfdc.jwt.audience'),
+                arg3: p('sfdc.jwt.keystore.path'),
+                arg4: p('sfdc.jwt.keystore.password'),
+                arg5: p('sfdc.jwt.key.alias')
+            }]]]></java:args>
+        </java:invoke-static>
+        <set-variable variableName="jwtAssertion" value="#[payload]"/>
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
+            <http:body><![CDATA[#[output application/x-www-form-urlencoded
+---
+{
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: vars.jwtAssertion
+}]]]></http:body>
+        </http:request>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
 
         <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/data/v60.0/sobjects/Synthesis_Order__c">
@@ -78,7 +96,25 @@ output application/json
         </http:listener>
         <set-variable variableName="requestBody" value="#[payload]"/>
 
-        <flow-ref name="get-sfdc-access-token-flow"/>
+        <java:invoke-static class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
+            <java:args><![CDATA[#[{
+                arg0: p('sfdc.consumer.key'),
+                arg1: p('sfdc.username'),
+                arg2: p('sfdc.jwt.audience'),
+                arg3: p('sfdc.jwt.keystore.path'),
+                arg4: p('sfdc.jwt.keystore.password'),
+                arg5: p('sfdc.jwt.key.alias')
+            }]]]></java:args>
+        </java:invoke-static>
+        <set-variable variableName="jwtAssertion" value="#[payload]"/>
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
+            <http:body><![CDATA[#[output application/x-www-form-urlencoded
+---
+{
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: vars.jwtAssertion
+}]]]></http:body>
+        </http:request>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
 
         <ee:transform>
@@ -131,7 +167,25 @@ var body = vars.requestBody
     <flow name="sf-get-orders-flow">
         <http:listener config-ref="SF_System_API_Listener_Config" path="/synthesis-orders" allowedMethods="GET"/>
 
-        <flow-ref name="get-sfdc-access-token-flow"/>
+        <java:invoke-static class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
+            <java:args><![CDATA[#[{
+                arg0: p('sfdc.consumer.key'),
+                arg1: p('sfdc.username'),
+                arg2: p('sfdc.jwt.audience'),
+                arg3: p('sfdc.jwt.keystore.path'),
+                arg4: p('sfdc.jwt.keystore.password'),
+                arg5: p('sfdc.jwt.key.alias')
+            }]]]></java:args>
+        </java:invoke-static>
+        <set-variable variableName="jwtAssertion" value="#[payload]"/>
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
+            <http:body><![CDATA[#[output application/x-www-form-urlencoded
+---
+{
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: vars.jwtAssertion
+}]]]></http:body>
+        </http:request>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
 
         <ee:transform>
@@ -171,7 +225,25 @@ payload.records map (order) -> {
             <http:response statusCode="#[vars.httpStatus default 200]"/>
         </http:listener>
 
-        <flow-ref name="get-sfdc-access-token-flow"/>
+        <java:invoke-static class="com.poc.ansa.JwtSigner" method="sign(String, String, String, String, String, String)">
+            <java:args><![CDATA[#[{
+                arg0: p('sfdc.consumer.key'),
+                arg1: p('sfdc.username'),
+                arg2: p('sfdc.jwt.audience'),
+                arg3: p('sfdc.jwt.keystore.path'),
+                arg4: p('sfdc.jwt.keystore.password'),
+                arg5: p('sfdc.jwt.key.alias')
+            }]]]></java:args>
+        </java:invoke-static>
+        <set-variable variableName="jwtAssertion" value="#[payload]"/>
+        <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/oauth2/token">
+            <http:body><![CDATA[#[output application/x-www-form-urlencoded
+---
+{
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion: vars.jwtAssertion
+}]]]></http:body>
+        </http:request>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
 
         <ee:transform>

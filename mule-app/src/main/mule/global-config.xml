@@ -11,43 +11,57 @@
     <!--
       Not in the brief's global-config.xml step, but every ${...}
       placeholder below needs a resolution source or the app can't even
-      deploy (MUnit included). config.properties holds safe, non-secret
-      local/test defaults only; real Salesforce credentials live in the
-      gitignored top-level .env and are expected to reach the runtime as
-      JVM system properties at deployment time. Note: system properties
-      take precedence over configuration-properties file values in Mule 4,
-      so that override path still works with this file present. (Found and
-      fixed while executing Task 5 the first time; still needed after the
-      Salesforce-connector-to-REST rewrite.)
+      deploy (MUnit included). Originally a <configuration-properties
+      file="config.properties" /> element (loading safe, non-secret
+      local/test defaults from mule-app/src/main/resources/config.properties)
+      here instead; changed to inline ${key:default} placeholder defaults
+      while debugging Task 12's Docker deploy. mule-maven-plugin 4.10.1
+      (needed to build at all: see pom.xml's comment on that version bump)
+      always embeds an "encoding" parameter (with a default value, since we
+      never set one) into <configuration-properties>'s serialized AST
+      entry, using its own bundled, newer-than-4.6.0 notion of that core
+      element's schema; this Mule 4.6.0 runtime's actual
+      configuration-properties component model has no such parameter, so
+      deploy fails rehydrating the AST with "Could not resolve
+      ParameterModel for [encoding]" (confirmed via runtimeVersion=4.6.0
+      and skipValidation=true on the plugin too; neither changed what got
+      embedded, so the plugin's handling of this specific element seems to
+      hardcode a fixed, newer schema either way). Inline defaults use
+      Mule's built-in placeholder resolution instead (system properties
+      always take precedence over the inline default, same override
+      behavior as before), so config.properties is no longer loaded; its
+      values are preserved here as the defaults. Real Salesforce
+      credentials still live in the gitignored top-level .env and reach
+      the runtime as JVM system properties at deployment time, unaffected
+      by this change.
     -->
-    <configuration-properties file="config.properties" />
 
     <http:listener-config name="SF_System_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${sf.system.api.port}" />
+        <http:listener-connection host="0.0.0.0" port="${sf.system.api.port:8082}" />
     </http:listener-config>
 
     <http:listener-config name="Feasibility_System_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${feasibility.system.api.port}" />
+        <http:listener-connection host="0.0.0.0" port="${feasibility.system.api.port:8083}" />
     </http:listener-config>
 
     <http:listener-config name="Process_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${process.api.port}" />
+        <http:listener-connection host="0.0.0.0" port="${process.api.port:8084}" />
     </http:listener-config>
 
     <http:listener-config name="Experience_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${experience.api.port}" />
+        <http:listener-connection host="0.0.0.0" port="${experience.api.port:8081}" />
     </http:listener-config>
 
     <http:request-config name="Feasibility_Service_Request_Config">
-        <http:request-connection host="${feasibility.host}" port="${feasibility.port}" />
+        <http:request-connection host="${feasibility.host:feasibility}" port="${feasibility.port:5001}" />
     </http:request-config>
 
     <http:request-config name="SF_System_API_Request_Config">
-        <http:request-connection host="${sf.system.api.host}" port="${sf.system.api.port}" />
+        <http:request-connection host="${sf.system.api.host:localhost}" port="${sf.system.api.port:8082}" />
     </http:request-config>
 
     <http:request-config name="Feasibility_System_API_Request_Config">
-        <http:request-connection host="${feasibility.system.api.host}" port="${feasibility.system.api.port}" />
+        <http:request-connection host="${feasibility.system.api.host:localhost}" port="${feasibility.system.api.port:8083}" />
     </http:request-config>
 
     <!--
@@ -63,12 +77,12 @@
       they're the same host (the org's My Domain instance URL).
     -->
     <http:request-config name="SFDC_Request_Config">
-        <http:request-connection host="${sfdc.instance.host}" port="443" protocol="HTTPS" />
+        <http:request-connection host="${sfdc.instance.host:login.salesforce.com}" port="443" protocol="HTTPS" />
     </http:request-config>
 
     <jms:config name="JMS_Config">
         <jms:active-mq-connection>
-            <jms:factory-configuration brokerUrl="${activemq.broker.url}" />
+            <jms:factory-configuration brokerUrl="${activemq.broker.url:tcp://localhost:61616}" />
         </jms:active-mq-connection>
     </jms:config>
 

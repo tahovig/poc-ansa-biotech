@@ -10,7 +10,9 @@
 
     <flow name="experience-submit-order-flow">
         <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="POST">
-            <http:response statusCode="#[vars.httpStatus default 200]"/>
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[{'Access-Control-Allow-Origin': '*'}]]]></http:headers>
+            </http:response>
         </http:listener>
         <choice>
             <when expression="#[not (isEmpty(payload.sequence default '')) and (payload.sequence matches /^[ACGTN]+$/)]">
@@ -26,7 +28,11 @@
     </flow>
 
     <flow name="experience-get-orders-flow">
-        <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="GET"/>
+        <http:listener config-ref="Experience_API_Listener_Config" path="/orders" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[{'Access-Control-Allow-Origin': '*'}]]]></http:headers>
+            </http:response>
+        </http:listener>
         <http:request config-ref="SF_System_API_Request_Config" method="GET" path="/synthesis-orders"/>
     </flow>
 
