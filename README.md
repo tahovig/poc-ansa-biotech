@@ -5,9 +5,42 @@ APIs), real Salesforce integration, and event-driven instrument telemetry.
 
 ## Run it
 
-1. Generate a JWT signing keypair (used for Salesforce's OAuth 2.0 JWT Bearer
-   flow; see `docs/superpowers/plans/2026-08-24-ansa-poc-implementation.md`
-   Task 2 for how to configure the matching Salesforce Connected App):
+Starting from a blank machine, in order:
+
+### Prerequisites
+
+- Docker + Docker Compose
+- OpenSSL (preinstalled on virtually every Linux distro)
+- [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli) (`sf`)
+- A Salesforce Developer Edition org (free at
+  [developer.salesforce.com/signup](https://developer.salesforce.com/signup))
+
+### Steps
+
+1. Clone this repo and authenticate the Salesforce CLI to your org:
+
+   ```bash
+   git clone https://github.com/tahovig/poc-ansa-biotech.git
+   cd poc-ansa-biotech
+   sf org login web --alias ansa-poc-dev
+   ```
+
+2. Create the Salesforce Connected App (manual, one-time, in Setup — see
+   `docs/superpowers/plans/2026-08-24-ansa-poc-implementation.md` Task 2
+   for the full step-by-step with every field/tab named). Condensed:
+
+   - Setup → App Manager → **New External Client App** (not "New Lightning
+     App"). Enable OAuth Settings; any callback URL satisfies the
+     required field, it's unused by the JWT Bearer flow this app uses.
+   - Save, then wait 10+ minutes for propagation (this app type
+     propagates slower than classic Connected Apps) before continuing.
+   - Under **Flow Enablement**, check **"Enable JWT Bearer Flow"** — this
+     reveals a Certificate Upload control, hidden until checked.
+   - Open the app → **Policies** tab → note the **Consumer Key** shown
+     there; you'll need it in step 4.
+
+3. Generate a JWT signing keypair and upload the certificate to the app
+   from step 2:
 
    ```bash
    mkdir -p keys
@@ -17,10 +50,18 @@ APIs), real Salesforce integration, and event-driven instrument telemetry.
      -subj "/CN=ansa-poc-mule-integration/O=Ansa POC/C=US"
    ```
 
-   Neither file is committed (`keys/` is gitignored).
+   Neither file is committed (`keys/` is gitignored). Upload
+   `keys/sfdc-jwt.crt` under the app's Flow Enablement → Certificate
+   Upload, then on the **Policies** tab set "Permitted Users" to **"Admin
+   approved users are pre-authorized"** (JWT Bearer has no browser
+   consent screen, so pre-authorization replaces it), create a
+   Permission Set to gate that pre-authorization, add it under "Selected
+   Permission Sets", and assign it to your own user.
 
-2. Copy `.env.example` to `.env` and fill in the `SFDC_*` values.
-3. Deploy the Salesforce object model and permission set:
+4. Copy `.env.example` to `.env` and fill in the `SFDC_*` values (the
+   Consumer Key from step 2, your Salesforce username, and your org's
+   instance host).
+5. Deploy the Salesforce object model and permission set:
 
    ```bash
    cd salesforce
@@ -35,8 +76,8 @@ APIs), real Salesforce integration, and event-driven instrument telemetry.
    query against `Synthesis_Order__c` fails with "No such column" until
    this runs. See "Notable runtime findings" below.
 
-4. `docker compose up --build`.
-5. Open `http://localhost:8090` — submit an order (any real Salesforce
+6. `docker compose up --build`.
+7. Open `http://localhost:8090` — submit an order (any real Salesforce
    Account Id from your org works for "Account ID"; the dashboard uppercases
    and validates the sequence for you) and watch its status progress from
    Feasible → In_Synthesis → QC → Shipped (or Rejected, for a sequence the
