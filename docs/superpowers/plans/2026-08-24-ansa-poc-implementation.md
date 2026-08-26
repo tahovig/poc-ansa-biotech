@@ -1415,9 +1415,9 @@ flow under test calls.
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { name: "ORD-1", accountId: "001AA", sequence: "ACGT", lengthBp: 4, status: "Feasible", feasibilityScore: 0.9, promisedShipDate: "2026-09-01", batchId: "batch-1" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { name: "ORD-1", accountId: "001AA", sequence: "ACGT", lengthBp: 4, status: "Feasible", feasibilityScore: 0.9, promisedShipDate: "2026-09-01", batchId: "batch-1" }]'/>
+            </munit:set-event>
             <flow-ref name="sf-create-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1482,9 +1482,9 @@ flow under test calls.
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:attributes value='#[{ uriParams: { batchId: "unknown-batch" } }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:attributes value='#[{ uriParams: { batchId: "unknown-batch" } }]'/>
+            </munit:set-event>
             <flow-ref name="sf-get-order-by-batch-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1672,9 +1672,9 @@ git commit -m "Add Feasibility System API proxy flow"
             <munit-tools:mock-when processor="jms:publish"/>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
             <flow-ref name="process-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1705,9 +1705,9 @@ git commit -m "Add Feasibility System API proxy flow"
             <munit-tools:mock-when processor="jms:publish"/>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { sequence: "GCGCGCGCGCGCGCGCGCGC", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "GCGCGCGCGCGCGCGCGCGC", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
             <flow-ref name="process-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1728,9 +1728,9 @@ git commit -m "Add Feasibility System API proxy flow"
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
             <flow-ref name="process-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1770,12 +1770,6 @@ Expected: FAIL — no flow named `process-order-flow`.
         <http:listener config-ref="Process_API_Listener_Config" path="/orders" allowedMethods="POST">
             <http:response statusCode="#[vars.httpStatus default 200]"/>
         </http:listener>
-        <error-handler>
-            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY">
-                <set-variable variableName="httpStatus" value="502"/>
-                <set-payload value='#[output application/json --- { error: "feasibility service unavailable" }]'/>
-            </on-error-propagate>
-        </error-handler>
 
         <set-variable variableName="orderPayload" value="#[payload]"/>
         <set-variable variableName="batchId" value="#[uuid()]"/>
@@ -1873,15 +1867,29 @@ output application/json
                 </ee:transform>
             </otherwise>
         </choice>
+
+        <error-handler>
+            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+                <set-variable variableName="httpStatus" value="502"/>
+                <set-payload value='#[output application/json --- { error: "feasibility service unavailable" }]'/>
+            </on-error-propagate>
+        </error-handler>
     </flow>
 
 </mule>
 ```
 
-- [ ] **Step 4: Run to verify it passes**
+**Note (fixed while executing):** `<error-handler>` must be the last
+child of `<flow>` per Mule's XSD, not placed right after the listener —
+moved accordingly. This is a schema-validity fix only; the error-handling
+behavior itself (catch HTTP:TIMEOUT/CONNECTIVITY from the feasibility
+call, set 502, no Salesforce write, no queue publish) is unchanged.
+
+- [ ] **Step 4: Build and verify (see the MUnit limitation in Global Constraints)**
 
 ```bash
-mvn -q clean test -Dtest=process-api-order-test-suite
+cd mule-app
+~/tools/apache-maven-3.9.6/bin/mvn clean package -DskipMunitTests
 ```
 
 Expected: `Tests run: 3, Failures: 0, Errors: 0`.
@@ -1957,9 +1965,9 @@ git commit -m "Add Process API order-submission orchestration flow"
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { batchId: "batch-1", progressPct: 40, event: "running", timestamp: "2026-08-24T10:00:00Z" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "batch-1", progressPct: 40, event: "running", timestamp: "2026-08-24T10:00:00Z" }]'/>
+            </munit:set-event>
             <flow-ref name="telemetry-consumer-flow"/>
         </munit:execution>
         <munit:validation>
@@ -1979,9 +1987,9 @@ git commit -m "Add Process API order-submission orchestration flow"
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { batchId: "batch-2", progressPct: 40, event: "running", timestamp: "2026-08-20T10:00:00Z" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "batch-2", progressPct: 40, event: "running", timestamp: "2026-08-20T10:00:00Z" }]'/>
+            </munit:set-event>
             <flow-ref name="telemetry-consumer-flow"/>
         </munit:execution>
         <munit:validation>
@@ -2003,9 +2011,9 @@ git commit -m "Add Process API order-submission orchestration flow"
             <munit-tools:mock-when processor="jms:publish"/>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { batchId: "unknown-batch", progressPct: 10, event: "started", timestamp: "2026-08-24T10:00:00Z" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { batchId: "unknown-batch", progressPct: 10, event: "started", timestamp: "2026-08-24T10:00:00Z" }]'/>
+            </munit:set-event>
             <flow-ref name="telemetry-consumer-flow"/>
         </munit:execution>
         <munit:validation>
@@ -2141,9 +2149,9 @@ git commit -m "Add telemetry consumer flow with forward-only state machine and D
 
     <munit:test name="invalid-sequence-returns-400-without-calling-process-api">
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { sequence: "", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
             <flow-ref name="experience-submit-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -2154,9 +2162,9 @@ git commit -m "Add telemetry consumer flow with forward-only state machine and D
 
     <munit:test name="sequence-with-invalid-bases-returns-400">
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { sequence: "ACGTXYZ", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTXYZ", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
             <flow-ref name="experience-submit-order-flow"/>
         </munit:execution>
         <munit:validation>
@@ -2173,9 +2181,9 @@ git commit -m "Add telemetry consumer flow with forward-only state machine and D
             </munit-tools:mock-when>
         </munit:behavior>
         <munit:execution>
-            <set-event>
-                <munit-tools:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
-            </set-event>
+            <munit:set-event>
+                <munit:payload value='#[output application/json --- { sequence: "ACGTACGTACGTACGTACGT", accountId: "001AA", requestedShipDate: "2026-09-01" }]'/>
+            </munit:set-event>
             <flow-ref name="experience-submit-order-flow"/>
         </munit:execution>
         <munit:validation>
