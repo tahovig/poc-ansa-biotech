@@ -117,7 +117,7 @@ output application/json
           flow doesn't track which step was in progress.
         -->
         <error-handler>
-            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR">
+            <on-error-propagate type="HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
                 <set-variable variableName="httpStatus" value="502"/>
                 <set-payload value='#[output application/json --- { error: "order submission failed: an upstream service was unavailable or rejected the request" }]'/>
             </on-error-propagate>

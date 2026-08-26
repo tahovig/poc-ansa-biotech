@@ -65,7 +65,7 @@
         </choice>
 
         <error-handler>
-            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
                 <set-variable variableName="httpStatus" value="502"/>
                 <set-payload value='#[output application/json --- { error: "order submission failed" }]'/>
             </on-error-propagate>
@@ -85,7 +85,7 @@
         <http:request config-ref="SF_System_API_Request_Config" method="GET" path="/synthesis-orders"/>
 
         <error-handler>
-            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
                 <set-variable variableName="httpStatus" value="502"/>
                 <set-payload value='#[output application/json --- { error: "order lookup failed" }]'/>
             </on-error-propagate>

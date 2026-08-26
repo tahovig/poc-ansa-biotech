@@ -39,8 +39,12 @@ APIs), real Salesforce integration, and event-driven instrument telemetry.
 5. Open `http://localhost:8090` — submit an order (any real Salesforce
    Account Id from your org works for "Account ID"; the dashboard uppercases
    and validates the sequence for you) and watch its status progress from
-   Feasible → In_Synthesis → QC → Shipped (or At_Risk / Rejected) as the
-   simulated instrument reports telemetry.
+   Feasible → In_Synthesis → QC → Shipped (or Rejected, for a sequence the
+   feasibility service flags heavily enough) as the simulated instrument
+   reports telemetry. To see the On-Time Guarantee flag an order At_Risk,
+   pick a "Requested Ship Date" within the next 3 days — the projection
+   only fires once the promised date is that close and progress is still
+   under 50%.
 
 ## Architecture
 

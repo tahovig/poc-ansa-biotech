@@ -81,7 +81,7 @@ output application/json
 { id: payload.id }]'/>
 
         <error-handler>
-            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
                 <set-variable variableName="httpStatus" value="502"/>
                 <set-payload value='#[output application/json --- { error: "salesforce create failed" }]'/>
             </on-error-propagate>
@@ -123,7 +123,7 @@ payload.records map (order) -> {
 }]'/>
 
         <error-handler>
-            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
                 <set-variable variableName="httpStatus" value="502"/>
                 <set-payload value='#[output application/json --- { error: "salesforce query failed" }]'/>
             </on-error-propagate>
@@ -236,7 +236,7 @@ var order = payload.records[0]
         </choice>
 
         <error-handler>
-            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY">
+            <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:INTERNAL_SERVER_ERROR, HTTP:TIMEOUT, HTTP:CONNECTIVITY, HTTP:BAD_GATEWAY, HTTP:SERVICE_UNAVAILABLE, HTTP:GATEWAY_TIMEOUT">
                 <set-variable variableName="httpStatus" value="502"/>
                 <set-payload value='#[output application/json --- { error: "salesforce request failed" }]'/>
             </on-error-propagate>
