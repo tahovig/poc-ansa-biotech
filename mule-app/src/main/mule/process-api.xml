@@ -2,13 +2,19 @@
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
       xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
-      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
         http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
-        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd
-        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
+
+    <!--
+      Every DataWeave transform in this file uses plain core
+      <set-payload> with an inline #[%dw 2.0 ...] expression instead of
+      <ee:transform>, since this runtime distribution doesn't bundle the
+      separate "ee" XML module those components need. See
+      salesforce-system-api.xml's comment for the full finding (Task 12).
+    -->
 
     <flow name="process-order-flow">
         <http:listener config-ref="Process_API_Listener_Config" path="/orders" allowedMethods="POST">
@@ -28,9 +34,7 @@
 
         <choice>
             <when expression="#[vars.feasibilityResult.feasible]">
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
+                <set-payload value='#[%dw 2.0
 output application/json
 var order = vars.orderPayload
 var result = vars.feasibilityResult
@@ -44,9 +48,7 @@ var result = vars.feasibilityResult
     feasibilityScore: result.score,
     promisedShipDate: order.requestedShipDate,
     batchId: vars.batchId
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
+}]'/>
                 <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
                     <http:body><![CDATA[#[payload]]]></http:body>
                 </http:request>
@@ -58,9 +60,7 @@ var result = vars.feasibilityResult
                     </jms:message>
                 </jms:publish>
 
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
+                <set-payload value='#[%dw 2.0
 output application/json
 ---
 {
@@ -70,14 +70,10 @@ output application/json
     score: vars.feasibilityResult.score,
     reasons: vars.feasibilityResult.reasons,
     status: "Feasible"
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
+}]'/>
             </when>
             <otherwise>
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
+                <set-payload value='#[%dw 2.0
 output application/json
 var order = vars.orderPayload
 var result = vars.feasibilityResult
@@ -92,15 +88,11 @@ var result = vars.feasibilityResult
     rejectionReason: result.reasons joinBy ", ",
     promisedShipDate: order.requestedShipDate,
     batchId: vars.batchId
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
+}]'/>
                 <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
                     <http:body><![CDATA[#[payload]]]></http:body>
                 </http:request>
-                <ee:transform>
-                    <ee:message>
-                        <ee:set-payload><![CDATA[%dw 2.0
+                <set-payload value='#[%dw 2.0
 output application/json
 ---
 {
@@ -109,9 +101,7 @@ output application/json
     score: vars.feasibilityResult.score,
     reasons: vars.feasibilityResult.reasons,
     status: "Rejected"
-}]]></ee:set-payload>
-                    </ee:message>
-                </ee:transform>
+}]'/>
             </otherwise>
         </choice>
 
@@ -125,16 +115,54 @@ output application/json
 
     <flow name="telemetry-consumer-flow">
         <jms:listener config-ref="JMS_Config" destination="batch-telemetry"/>
-        <set-variable variableName="telemetry" value="#[payload]"/>
+        <!--
+          The simulator (a plain STOMP client, not a Mule/JMS producer)
+          sends a JMS message with no recognized content type, so Mule's
+          JMS listener hands it to the flow as raw Binary rather than an
+          already-parsed application/json payload; #[payload] alone left
+          vars.telemetry as that Binary, and any field access on it
+          (vars.telemetry.event, .batchId, ...) failed with "Value
+          Selector" errors, sending every message straight to the DLQ.
+          Found running Task 12's end-to-end demo. read() with an
+          explicit mimeType parses it regardless of what content type (if
+          any) the message arrived with.
+        -->
+        <set-variable variableName="telemetry" value="#[read(payload, 'application/json')]"/>
 
-        <http:request config-ref="SF_System_API_Request_Config" method="GET" path="/synthesis-orders/#[vars.telemetry.batchId]">
-            <http:response-validator>
-                <http:success-status-code-validator values="0..599"/>
-            </http:response-validator>
+        <!--
+          This used to call back into this app's own SF System API
+          (GET/PATCH SF_System_API_Request_Config's "/synthesis-orders/
+          {batchId}") to look up and update the order by batch. Found
+          running Task 12's end-to-end demo: that self-referencing HTTP
+          hop (this flow, over HTTP, back into a listener this SAME
+          Mule instance is also serving on the same port) consistently
+          returned sf-get-orders-flow's full-list response instead of
+          sf-get-order-by-batch-flow's single-record one, no matter how
+          correct the interpolated path was (confirmed correct via a
+          logger right before the call, and confirmed the identical URL
+          worked correctly over a real external curl to the same port).
+          Never tracked down which layer picks the wrong listener for a
+          same-process loopback call; querying Salesforce directly here
+          (the same SOQL/PATCH pattern salesforce-system-api.xml's
+          sf-get-order-by-batch-flow already uses) sidesteps it rather
+          than chasing it further, and cuts an unnecessary hop besides.
+        -->
+        <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
+        <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <set-variable variableName="soql" value='#[%dw 2.0
+output text/plain
+var safeBatchId = vars.telemetry.batchId replace "&apos;" with "\\&apos;"
+---
+"SELECT Id, Status__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
+
+        <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
+            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
+            <http:query-params><![CDATA[#[{ q: vars.soql }]]]></http:query-params>
         </http:request>
 
         <choice>
-            <when expression="#[attributes.statusCode == 404]">
+            <when expression="#[sizeOf(payload.records) == 0]">
                 <jms:publish config-ref="JMS_Config" destination="batch-telemetry-dlq">
                     <jms:message>
                         <jms:body><![CDATA[#[vars.telemetry]]]></jms:body>
@@ -142,7 +170,7 @@ output application/json
                 </jms:publish>
             </when>
             <otherwise>
-                <set-variable variableName="currentOrder" value="#[payload]"/>
+                <set-variable variableName="currentOrder" value="#[payload.records[0]]"/>
                 <set-variable variableName="lifecycleRank" value='#[{
                     "Submitted": 0, "Feasible": 1, "Rejected": 1,
                     "In_Synthesis": 2, "QC": 3, "Shipped": 4, "At_Risk": 2
@@ -152,8 +180,22 @@ output application/json
                     "qc_pass": "QC", "qc_fail": "QC", "shipped": "Shipped"
                 }]'/>
                 <set-variable variableName="candidateStatus" value="#[vars.eventStatusMap[vars.telemetry.event]]"/>
+                <!--
+                  Needs an explicit output type: this plain #[...] form
+                  (no %dw 2.0 header) can't always infer one on its own
+                  when the values on either side of the comparison came
+                  from differently-typed sources (lifecycleRank is a DW
+                  object literal, currentOrder.Status__c came off a
+                  parsed Salesforce JSON response); found running Task
+                  12's end-to-end demo: "Unable to infer a output media
+                  type as more than one is being used: application/java,
+                  application/json".
+                -->
                 <set-variable variableName="isForwardMove"
-                    value="#[vars.lifecycleRank[vars.candidateStatus] >= vars.lifecycleRank[vars.currentOrder.status]]"/>
+                    value='#[%dw 2.0
+output application/java
+---
+vars.lifecycleRank[vars.candidateStatus] >= vars.lifecycleRank[vars.currentOrder.Status__c]]'/>
 
                 <choice>
                     <when expression="#[vars.isForwardMove]">
@@ -163,16 +205,13 @@ output application/json
                             value="#[(vars.telemetry.event == 'running') and (vars.telemetry.progressPct &lt; 50)]"/>
                         <set-variable variableName="finalStatus"
                             value="#[if (vars.projectedLate) 'At_Risk' else vars.candidateStatus]"/>
-                        <ee:transform>
-                            <ee:message>
-                                <ee:set-payload><![CDATA[%dw 2.0
+                        <set-payload value='#[%dw 2.0
 output application/json
 ---
-{ status: vars.finalStatus, progressPct: vars.telemetry.progressPct }]]></ee:set-payload>
-                            </ee:message>
-                        </ee:transform>
-                        <http:request config-ref="SF_System_API_Request_Config" method="PATCH" path="/synthesis-orders/#[vars.telemetry.batchId]">
+{ Status__c: vars.finalStatus, Progress_Pct__c: vars.telemetry.progressPct }]'/>
+                        <http:request config-ref="SFDC_Request_Config" method="PATCH" path="#['/services/data/v60.0/sobjects/Synthesis_Order__c/' ++ vars.currentOrder.Id]">
                             <http:body><![CDATA[#[payload]]]></http:body>
+                            <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken, 'Content-Type': 'application/json' }]]]></http:headers>
                         </http:request>
                     </when>
                     <otherwise>

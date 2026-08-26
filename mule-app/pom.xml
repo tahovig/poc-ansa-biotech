@@ -42,79 +42,45 @@
             <version>1.9.2</version>
             <classifier>mule-plugin</classifier>
         </dependency>
-        <dependency>
-            <groupId>org.apache.activemq</groupId>
-            <artifactId>artemis-jms-client-all</artifactId>
-            <version>2.37.0</version>
-        </dependency>
         <!--
-          Brief specified groupId org.mule.modules (plural) and version
-          1.2.19; neither resolves. Real groupId is org.mule.module
-          (singular, confirmed via MuleSoft's own Java Module docs and the
-          Anypoint Exchange metadata listing). 1.2.19 doesn't exist in that
-          listing at all (it jumps 1.2.18 -> 2.0.x), so pinned to the
-          nearest valid release. Found while executing Task 5.
+          Originally artemis-jms-client-all (matching the Artemis broker
+          image in docker-compose.yml), but Mule's JMS connector's default
+          Connection Factory auto-detection is hardcoded to instantiate
+          org.apache.activemq.ActiveMQConnectionFactory specifically;
+          that class belongs to the classic ActiveMQ 5.x client
+          (activemq-client), not Artemis's own client library (whose
+          connection factory lives under a different package,
+          org.apache.activemq.artemis.jms.client). Artemis brokers support
+          the classic OpenWire protocol for exactly this kind of
+          compatibility, so the classic client still connects to the same
+          Artemis broker without any docker-compose change. Found
+          deploying Task 12's Docker stack (JmsMissingLibraryException:
+          ClassNotFoundException: org.apache.activemq.ActiveMQConnectionFactory).
         -->
         <dependency>
-            <groupId>org.mule.module</groupId>
-            <artifactId>mule-java-module</artifactId>
-            <!--
-              Version-hunted extensively while executing Task 12 to find a
-              release of this connector that both builds AND deploys inside
-              the real Mule 4.6.0 standalone runtime:
-                - 1.2.18 (brief's nearest-valid-release from Task 5): builds
-                  fine, but deploy throws EnumConstantNotPresentException:
-                  org.mule.sdk.api.meta.JavaVersion.JAVA_25 (its extension
-                  model declares JAVA_25 as a supported Java version in its
-                  bundled annotation metadata, but the mule-sdk-api actually
-                  loaded by the runtime's core classloader at deploy time
-                  predates that enum constant, so reflectively reading the
-                  annotation throws).
-                - 1.2.15/1.2.16 don't even resolve: their POMs depend on
-                  org.springframework:spring-core:5.3.39-spring-framework-5.3.45,
-                  an internal MuleSoft-forked version string not published
-                  on any repository this project can reach (confirmed 404 on
-                  both repository.mulesoft.org/releases and
-                  anypoint-exchange-v3).
-                - 1.2.13, the newest release still on a plain published
-                  spring-core (5.3.33), resolves and builds, but deploy fails
-                  differently: "Can't resolve .../mule-ee.xsd" plus a
-                  suppressed "No enum constant ...ComponentType.SUB_FLOW"
-                  (its jar bundles mule-sdk-api 0.7.0 / mule-extensions-api
-                  1.5.0, both older than what the 4.6.0 runtime's own config
-                  parser uses (1.6.0 / mule-artifact-ast-serialization
-                  1.2.0), clashing with app-wide XML parsing for every
-                  config file, not just the one using java:invoke-static).
-                - 1.2.10 avoids both of the above but is rejected outright:
-                  JavaVersionNotSupportedByExtensionException, "Supported
-                  versions are: [1.8, 11]" (no 17, and this runtime's JRE is
-                  17).
-              No publicly-resolvable version threads this needle, so stayed
-              on 1.2.18 (verified the closest to a clean deploy of all of
-              the above). Also tried fixing the JAVA_25 problem at what
-              looked like its root: the 4.6.0 distribution's own bundled
-              mule-sdk-api (0.8.0, confirmed via its JavaVersion.class:
-              only JAVA_8/11/17) predates that enum constant, and swapping
-              in a newer mule-sdk-api release that has it (tried both
-              1.0.0, the earliest with JAVA_25, and 1.2.0, the latest) does
-              make that specific exception go away. But it trades it for a
-              worse one: empirically (confirmed by toggling only this one
-              change, everything else held fixed), doing so breaks the
-              distribution's own EE transform module's schema
-              registration, so deploy then fails on the first config file
-              using ee:transform (nearly every file in this app) instead of
-              the one using java:invoke-static. No sdk-api version
-              satisfies both: every release with JAVA_25 breaks EE
-              registration, and every release that doesn't predates
-              JAVA_25. Left mule-app/Dockerfile NOT patching sdk-api as a
-              result: JAVA_25 (blocking java:invoke, i.e. this app's whole
-              Salesforce JWT auth path) remains the app's current,
-              unresolved deploy blocker on this runtime; see Task 12's
-              report for the full diagnostic trail and what's ruled out.
-            -->
-            <version>1.2.18</version>
-            <classifier>mule-plugin</classifier>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>activemq-client</artifactId>
+            <version>5.18.3</version>
         </dependency>
+        <!--
+          mule-java-module (needed for java:invoke-static to run
+          JwtSigner.java) was removed entirely while executing Task 12: no
+          publicly-resolvable version is compatible with this Mule 4.6.0
+          standalone runtime for real deployment (every version new enough
+          for Java 17 declares a JavaVersion.JAVA_25 enum constant this
+          runtime's bundled mule-sdk-api 0.8.0 doesn't have; patching the
+          runtime's own sdk-api to add JAVA_25 support breaks its EE/
+          DataWeave module registration instead, confirmed empirically,
+          no version threads the needle. JWT signing moved out of Mule
+          entirely into the small dedicated sfdc-auth Python service
+          (services/sfdc-auth/), reusing the JWT logic already verified
+          working in Task 2. Mule now just calls that service over plain
+          HTTP (see salesforce-system-api.xml and global-config.xml's
+          SFDC_Auth_Request_Config), the same pattern as every other
+          System API call in this app, no custom Mule extension
+          involved, so this class of runtime/SDK version conflict can't
+          recur. JwtSigner.java and src/main/java/ were deleted.
+        -->
         <dependency>
             <groupId>com.mulesoft.munit</groupId>
             <artifactId>munit-runner</artifactId>
@@ -148,42 +114,57 @@
                 <groupId>org.mule.tools.maven</groupId>
                 <artifactId>mule-maven-plugin</artifactId>
                 <!--
-                  4.10.1 (the version bumped to in order to get past a
-                  build-time crash in the brief's original 4.2.0, see
-                  below) builds fine, but its generated
-                  META-INF/mule-artifact/artifact.ast doesn't match this
-                  Mule 4.6.0 runtime's own component/parameter models at
-                  deploy time in several different ways (a SUB_FLOW enum
-                  constant the runtime doesn't have, an "encoding" parameter
-                  on <configuration-properties> it doesn't recognize, and
-                  further unresolvable nested models beyond that), found
-                  while debugging Task 12's Docker deploy; setting
-                  runtimeVersion/skipValidation didn't change what it
-                  embeds. mule-maven-plugin 4.6.0 exists as an exact
-                  version-matched release for this runtime, on the theory
-                  it'd generate an AST format the runtime actually
-                  understands. (The SUB_FLOW and "encoding" problems above
-                  were actually fixed separately, at the content level,
-                  before this plugin version was even tried: see
-                  salesforce-system-api.xml's comment on dropping its
-                  source-less sub-flow/flow-ref, and global-config.xml's on
-                  dropping <configuration-properties>. Whether 4.6.0 alone,
-                  without those content changes, would also have avoided
-                  those two specific errors was never isolated; left as an
-                  open question, and the content changes are correct to
-                  keep regardless of plugin version.) This plugin bump does
-                  NOT fix the
-                  deeper, still-unresolved mule-java-module/mule-sdk-api
-                  conflict described in that dependency's own comment above:
-                  deploy currently fails there before ever reaching this
-                  plugin's AST at all, so whether 4.6.0 fully resolves the
-                  AST-format mismatch on its own is unconfirmed beyond that
-                  point. Left at 4.6.0 regardless since it's the more
-                  defensible choice (version-matched to the runtime) once
-                  the java-module blocker is resolved.
+                  4.10.1 originally caused deploy-time AST mismatches
+                  against this Mule 4.6.0 runtime (a SUB_FLOW enum constant
+                  the runtime doesn't have, an "encoding" parameter on
+                  <configuration-properties> it doesn't recognize),
+                  found while debugging Task 12's Docker deploy. Both were
+                  fixed at the content level instead of by changing this
+                  plugin version: see salesforce-system-api.xml's comment
+                  on dropping its source-less sub-flow/flow-ref, and
+                  global-config.xml's on dropping <configuration-properties>
+                  (see that file's comment for the full property-resolution
+                  story, including why plain ${key} with no default ended
+                  up the final form). A
+                  version-matched 4.6.0 release of this plugin was tried
+                  as an alternative fix, but its own build-time dependency
+                  graph requires org.raml:raml-parser-2-bom, which is only
+                  resolvable from an internal MuleSoft host
+                  (repository-master.mulesoft.org) not reachable from this
+                  environment, confirmed by testing directly, both online
+                  and with -o against the local cache. Reverted to 4.10.1,
+                  which resolves cleanly from this project's public
+                  repositories and, with the content-level AST fixes above
+                  in place, is the version actually verified working end
+                  to end in Task 12.
                 -->
-                <version>4.6.0</version>
+                <version>4.10.1</version>
                 <extensions>true</extensions>
+                <!--
+                  activemq-client is a plain jar dependency, not a
+                  mule-plugin, so Mule's classloader isolation hides its
+                  classes from the JMS connector by default. Deploy failed
+                  with JmsMissingLibraryException: ClassNotFoundException:
+                  org.apache.activemq.ActiveMQConnectionFactory until this
+                  was declared as a shared library both here (this plugin's
+                  own <configuration><sharedLibraries> element) and
+                  directly in mule-artifact.json's
+                  classLoaderModelLoaderDescriptor.attributes.sharedLibraries;
+                  declaring it in only one of the two places was
+                  insufficient in testing, both were needed together.
+                  Never caught by `mvn package` alone, since that doesn't
+                  exercise the runtime's classloader isolation the way an
+                  actual deploy does; found deploying Task 12's Docker
+                  stack.
+                -->
+                <configuration>
+                    <sharedLibraries>
+                        <sharedLibrary>
+                            <groupId>org.apache.activemq</groupId>
+                            <artifactId>activemq-client</artifactId>
+                        </sharedLibrary>
+                    </sharedLibraries>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>com.mulesoft.munit.tools</groupId>
@@ -209,9 +190,10 @@
               The mule-application packaging's default lifecycle still binds
               a plain maven-surefire-plugin "default-test" execution to the
               test phase (for projects with Java-based unit tests under
-              src/test/java; this project's src/main/java has JwtSigner.java
-              but there are no Java tests under src/test/java). With no Java
-              test sources that execution is normally a harmless no-op, but
+              src/test/java; this project has none, src/main/java itself
+              was removed in Task 12, see the pom's former mule-java-module
+              dependency comment. With no Java test sources that execution
+              is normally a harmless no-op, but
               `-Dtest=<suite-name>` on the command line (per this task's run
               command) is a generic Surefire filter property that this
               unrelated execution also picks up and then fails on ("No tests

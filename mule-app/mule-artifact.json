@@ -4,6 +4,12 @@
   "requiredProduct": "MULE",
   "classLoaderModelLoaderDescriptor": {
     "id": "mule",
-    "attributes": { "exportedPackages": [], "exportedResources": [] }
+    "attributes": {
+      "exportedPackages": [],
+      "exportedResources": [],
+      "sharedLibraries": [
+        { "groupId": "org.apache.activemq", "artifactId": "activemq-client" }
+      ]
+    }
   }
 }

@@ -9,59 +9,69 @@
         http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
 
     <!--
-      Not in the brief's global-config.xml step, but every ${...}
-      placeholder below needs a resolution source or the app can't even
-      deploy (MUnit included). Originally a <configuration-properties
-      file="config.properties" /> element (loading safe, non-secret
-      local/test defaults from mule-app/src/main/resources/config.properties)
-      here instead; changed to inline ${key:default} placeholder defaults
-      while debugging Task 12's Docker deploy. mule-maven-plugin 4.10.1
-      (needed to build at all: see pom.xml's comment on that version bump)
-      always embeds an "encoding" parameter (with a default value, since we
-      never set one) into <configuration-properties>'s serialized AST
-      entry, using its own bundled, newer-than-4.6.0 notion of that core
-      element's schema; this Mule 4.6.0 runtime's actual
-      configuration-properties component model has no such parameter, so
-      deploy fails rehydrating the AST with "Could not resolve
-      ParameterModel for [encoding]" (confirmed via runtimeVersion=4.6.0
-      and skipValidation=true on the plugin too; neither changed what got
-      embedded, so the plugin's handling of this specific element seems to
-      hardcode a fixed, newer schema either way). Inline defaults use
-      Mule's built-in placeholder resolution instead (system properties
-      always take precedence over the inline default, same override
-      behavior as before), so config.properties is no longer loaded; its
-      values are preserved here as the defaults. Real Salesforce
-      credentials still live in the gitignored top-level .env and reach
-      the runtime as JVM system properties at deployment time, unaffected
-      by this change.
+      Every ${...} placeholder below is resolved purely from JVM system
+      properties (the -M-D flags docker-entrypoint.sh always passes),
+      no <configuration-properties> file, no inline ${key:default} syntax.
+      Two things were tried and ruled out while debugging Task 12's Docker
+      deploy:
+      1. <configuration-properties file="config.properties" />: this Mule
+         4.6.0 runtime's actual configuration-properties component model
+         doesn't recognize an "encoding" parameter that mule-maven-plugin
+         4.10.1 (needed to build at all, see pom.xml's comment on that
+         version) always embeds in the element's serialized AST regardless;
+         deploy failed rehydrating the AST with "Could not resolve
+         ParameterModel for [encoding]", confirmed unaffected by
+         runtimeVersion/skipValidation settings on the plugin.
+      2. Inline ${key:default} syntax (a common convention in other
+         property-placeholder systems): this runtime's placeholder
+         resolver does not treat ':' as a default-value separator at all;
+         it reads the whole string, colon included, as one literal
+         property name, so deploy failed with PropertyNotFoundException:
+         Couldn't find configuration property value for key
+         "sf.system.api.port:8082" (i.e. literally that whole string).
+      Every property referenced anywhere in this file is unconditionally
+      supplied via -M-D by docker-entrypoint.sh for the real deployment,
+      so plain ${key} with no default is both correct and sufficient here.
     -->
 
     <http:listener-config name="SF_System_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${sf.system.api.port:8082}" />
+        <http:listener-connection host="0.0.0.0" port="${sf.system.api.port}" />
     </http:listener-config>
 
     <http:listener-config name="Feasibility_System_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${feasibility.system.api.port:8083}" />
+        <http:listener-connection host="0.0.0.0" port="${feasibility.system.api.port}" />
     </http:listener-config>
 
     <http:listener-config name="Process_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${process.api.port:8084}" />
+        <http:listener-connection host="0.0.0.0" port="${process.api.port}" />
     </http:listener-config>
 
     <http:listener-config name="Experience_API_Listener_Config">
-        <http:listener-connection host="0.0.0.0" port="${experience.api.port:8081}" />
+        <http:listener-connection host="0.0.0.0" port="${experience.api.port}" />
     </http:listener-config>
 
     <http:request-config name="Feasibility_Service_Request_Config">
-        <http:request-connection host="${feasibility.host:feasibility}" port="${feasibility.port:5001}" />
+        <http:request-connection host="${feasibility.host}" port="${feasibility.port}" />
     </http:request-config>
 
     <http:request-config name="SF_System_API_Request_Config">
-        <http:request-connection host="${sf.system.api.host:localhost}" port="${sf.system.api.port:8082}" />
+        <http:request-connection host="${sf.system.api.host}" port="${sf.system.api.port}" />
     </http:request-config>
 
     <http:request-config name="Feasibility_System_API_Request_Config">
-        <http:request-connection host="${feasibility.system.api.host:localhost}" port="${feasibility.system.api.port:8083}" />
+        <http:request-connection host="${feasibility.system.api.host}" port="${feasibility.system.api.port}" />
+    </http:request-config>
+
+    <!--
+      Missing since this file was first written: every other tier has both
+      a listener config (for its own inbound side) and a request config
+      (for other flows to call it), but Process API only ever had the
+      listener half; Experience API's proxy to POST /orders had nothing
+      to reference. Found deploying Task 12's Docker stack (the AST/property
+      issues fixed above happened to mask this one until they were cleared).
+    -->
+    <http:request-config name="Process_API_Request_Config">
+        <http:request-connection host="${process.api.host}" port="${process.api.port}" />
     </http:request-config>
 
     <!--
@@ -70,19 +80,45 @@
       descriptor, incompatible with this project's Community Edition/
       no-Anypoint-account constraint; discovered and fixed while executing
       Task 5). Auth is OAuth 2.0 JWT Bearer, same flow verified working in
-      Task 2, but the token exchange now happens via a plain http:request
-      inside salesforce-system-api.xml's get-sfdc-access-token-flow rather
-      than a connector-managed connection. One shared request-config
-      serves both the token endpoint and the data REST endpoints since
-      they're the same host (the org's My Domain instance URL).
+      Task 2. Data calls go straight to the org's REST API via this config.
     -->
     <http:request-config name="SFDC_Request_Config">
-        <http:request-connection host="${sfdc.instance.host:login.salesforce.com}" port="443" protocol="HTTPS" />
+        <http:request-connection host="${sfdc.instance.host}" port="443" protocol="HTTPS" />
     </http:request-config>
 
+    <!--
+      The JWT-signing step itself doesn't happen in Mule anymore.
+      mule-java-module (needed for java:invoke-static to sign the JWT)
+      turned out to be permanently incompatible with this Mule 4.6.0
+      standalone runtime: every module version new enough for Java 17
+      declares a JavaVersion.JAVA_25 enum constant the runtime's bundled
+      mule-sdk-api (0.8.0) doesn't have, and patching the runtime's sdk-api
+      to add JAVA_25 support breaks its own EE/DataWeave module
+      registration instead, confirmed empirically, no version threads
+      the needle (see mule-app/pom.xml's prior mule-java-module dependency
+      comment, now removed along with the dependency, and Task 12's
+      report for the full diagnostic trail). Discovered and fixed while
+      executing Task 12. JWT signing now happens in the small dedicated
+      sfdc-auth Python service (services/sfdc-auth/) using the same logic
+      already verified working in Task 2. Mule just calls it over plain
+      HTTP to get a fresh access token, same as any other System API call
+      in this app.
+    -->
+    <http:request-config name="SFDC_Auth_Request_Config">
+        <http:request-connection host="${sfdc.auth.host}" port="${sfdc.auth.port}" />
+    </http:request-config>
+
+    <!--
+      username/password added deploying Task 12's Docker stack: without
+      them the connection reached the Artemis broker fine over OpenWire
+      (confirming the activemq-client shared-library fix above worked)
+      but failed authentication with "User name [null] or password is
+      invalid"; Artemis requires the ARTEMIS_USER/ARTEMIS_PASSWORD
+      credentials set in docker-compose.yml, which nothing was providing.
+    -->
     <jms:config name="JMS_Config">
-        <jms:active-mq-connection>
-            <jms:factory-configuration brokerUrl="${activemq.broker.url:tcp://localhost:61616}" />
+        <jms:active-mq-connection username="${activemq.username}" password="${activemq.password}">
+            <jms:factory-configuration brokerUrl="${activemq.broker.url}" />
         </jms:active-mq-connection>
     </jms:config>
 

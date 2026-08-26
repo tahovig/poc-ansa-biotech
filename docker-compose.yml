@@ -19,6 +19,16 @@ services:
     ports:
       - "5001:5001"
 
+  sfdc-auth:
+    build: ./services/sfdc-auth
+    env_file: .env
+    environment:
+      SFDC_JWT_PRIVATE_KEY_PATH: /app/keys/sfdc-jwt.key
+    volumes:
+      - ./mule-app/src/main/resources/keys/sfdc-jwt.key:/app/keys/sfdc-jwt.key:ro
+    ports:
+      - "5002:5002"
+
   mule-app:
     build: ./mule-app
     env_file: .env
@@ -26,6 +36,8 @@ services:
       activemq:
         condition: service_healthy
       feasibility:
+        condition: service_started
+      sfdc-auth:
         condition: service_started
     ports:
       - "8081:8081"

@@ -2622,6 +2622,38 @@ git commit -m "Add polling status dashboard"
 
 ### Task 12: Full stack wiring (Docker Compose + Mule packaging)
 
+**Revised during execution.** JWT signing (Step 1's `-M-D` flags for a
+keystore-based signer) moved out of Mule entirely: `mule-java-module` has
+no publicly-resolvable version compatible with this Mule 4.6.0 standalone
+runtime (every version new enough for Java 17 needs a `mule-sdk-api`
+enum constant this runtime's bundled version lacks, and patching the
+runtime to add it breaks its own EE registration instead). A new
+`services/sfdc-auth/` Python/Flask service does the signing now, reusing
+Task 2's already-verified JWT Bearer logic; Mule calls it over plain HTTP
+for a token, the same pattern as every other System API call in this app.
+Getting from "container builds" to a real, working
+Submitted -> Feasible -> In_Synthesis -> Shipped run against the live org
+then surfaced fifteen further bugs, none of which `mvn package` alone
+could have caught (they only show up under a real deploy's classloader
+isolation, runtime property resolution, or actual HTTP/JMS traffic): a
+plugin version needing an unreachable internal Maven host, this
+runtime not bundling the `ee:` XML module at all, unsupported
+`${key:default}` placeholder syntax, an 8-flag limit on `-M-D` silently
+dropping everything past it, a request-config that was never defined
+anywhere in the plan, a JMS connector/client library mismatch, missing
+JMS credentials, Salesforce custom fields deployed via Metadata API
+carrying zero field-level security on any profile (including System
+Administrator), a STOMP-vs-JMS destination-prefix mismatch on the
+broker, a blocked STOMP receiver thread plus missing heartbeats dropping
+the simulator's broker connection, JMS messages arriving with no
+recognized content type, two HTTP listeners sharing one path template
+never populating `uriParams`, `attributes` being silently overwritten by
+every `<http:request>` a flow makes, a same-process HTTP loopback call
+consistently hitting the wrong listener, and a DataWeave output-media-type
+inference failure. See the ledger's Task 12 entry for the full list with
+symptoms and fixes; every fix is also commented in the source file it
+touches.
+
 **Files:**
 - Create: `mule-app/docker-entrypoint.sh`
 - Create: `mule-app/Dockerfile`
