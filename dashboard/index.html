@@ -7,21 +7,24 @@
 </head>
 <body>
   <h1>Synthesis Orders</h1>
+  <p class="tagline">DNA synthesis order &amp; fulfillment pipeline — Experience API, Process API, Salesforce, and instrument telemetry, live.</p>
 
   <form id="order-form">
-    <label>Sequence <input name="sequence" required></label>
+    <label>Sequence <input name="sequence" required placeholder="ACGT..."></label>
     <label>Account ID <input name="accountId" required></label>
     <label>Requested Ship Date <input name="requestedShipDate" type="date" required></label>
     <button type="submit">Submit Order</button>
   </form>
-  <pre id="submit-result"></pre>
+  <p id="submit-result"></p>
 
-  <table>
-    <thead>
-      <tr><th>Order</th><th>Status</th><th>Progress</th><th>Feasibility</th><th>Batch</th></tr>
-    </thead>
-    <tbody id="orders-body"></tbody>
-  </table>
+  <div class="layout">
+    <div id="orders-container" class="orders-container"></div>
+
+    <section class="event-feed">
+      <h2>Pipeline Activity</h2>
+      <ul id="event-feed-list"><li class="event-empty">No activity yet.</li></ul>
+    </section>
+  </div>
 
   <script src="app.js"></script>
 </body>
