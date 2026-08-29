@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
 
     <!--
       The dashboard (localhost:8090) submits orders to this API
@@ -54,6 +56,16 @@
         </http:listener>
         <choice>
             <when expression="#[not (isEmpty(payload.sequence default '')) and (payload.sequence matches /^[ACGTN]+$/)]">
+                <try>
+                    <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                        <jms:message>
+                            <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: null, source: "experience-api", message: "Order submission received" }]]]></jms:body>
+                        </jms:message>
+                    </jms:publish>
+                    <error-handler>
+                        <on-error-continue type="ANY"/>
+                    </error-handler>
+                </try>
                 <http:request config-ref="Process_API_Request_Config" method="POST" path="/orders">
                     <http:body><![CDATA[#[payload]]]></http:body>
                 </http:request>
