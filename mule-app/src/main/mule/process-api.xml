@@ -172,6 +172,17 @@ output application/json
         -->
         <set-variable variableName="telemetry" value="#[read(payload, 'application/json')]"/>
 
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.telemetry.batchId, source: "process-api", message: "Received instrument telemetry: " ++ vars.telemetry.event ++ " (" ++ (vars.telemetry.progressPct as String) ++ "%)" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY"/>
+            </error-handler>
+        </try>
+
         <!--
           This used to call back into this app's own SF System API
           (GET/PATCH SF_System_API_Request_Config's "/synthesis-orders/
@@ -203,6 +214,17 @@ output text/plain
 var safeBatchId = (vars.telemetry.batchId replace "\\" with "\\\\") replace "&apos;" with "\\&apos;"
 ---
 "SELECT Id, Status__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
+
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.telemetry.batchId, source: "process-api", message: "Salesforce: looking up order by batch" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY"/>
+            </error-handler>
+        </try>
 
         <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
             <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
@@ -276,6 +298,16 @@ else (vars.telemetry.event == "running")
     and ((now() as Date) &gt;= ((promisedShipDate as Date) - |P3D|))]'/>
                         <set-variable variableName="finalStatus"
                             value="#[if (vars.projectedLate) 'At_Risk' else vars.candidateStatus]"/>
+                        <try>
+                            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                                <jms:message>
+                                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.telemetry.batchId, source: "process-api", message: "Salesforce: updating order status to " ++ vars.finalStatus }]]]></jms:body>
+                                </jms:message>
+                            </jms:publish>
+                            <error-handler>
+                                <on-error-continue type="ANY"/>
+                            </error-handler>
+                        </try>
                         <set-payload value='#[%dw 2.0
 output application/json
 ---
