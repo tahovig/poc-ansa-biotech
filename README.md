@@ -82,10 +82,14 @@ Starting from a blank machine, in order:
    and validates the sequence for you) and watch its status progress from
    Feasible → In_Synthesis → QC → Shipped (or Rejected, for a sequence the
    feasibility service flags heavily enough) as the simulated instrument
-   reports telemetry. To see the On-Time Guarantee flag an order At_Risk,
-   pick a "Requested Ship Date" within the next 3 days — the projection
-   only fires once the promised date is that close and progress is still
-   under 50%.
+   reports telemetry. The "Pipeline Activity" panel shows this happening
+   live — Mule flows publish an event for each Salesforce/feasibility call
+   they make, and the dashboard subscribes to those events directly over
+   a WebSocket, so they appear within about a second of the actual backend
+   call rather than waiting for the next poll. To see the On-Time
+   Guarantee flag an order At_Risk, pick a "Requested Ship Date" within
+   the next 3 days — the projection only fires once the promised date is
+   that close and progress is still under 50%.
 
 ## Architecture
 
@@ -129,6 +133,13 @@ interesting ones, each documented in place in the source file it affects:
   producer/consumer using `/queue/foo` and a JMS one using `foo` silently
   talk to two different addresses and never exchange a message. See
   `services/instrument-simulator/simulator.py`.
+- **A browser can speak STOMP-over-WebSocket directly to this broker's
+  existing plain acceptor** — no separate WebSocket acceptor or
+  `broker.xml` change needed; Artemis's Netty transport auto-detects the
+  WebSocket upgrade handshake on the same port already used for plain
+  TCP STOMP. The dashboard's live Pipeline Activity feed
+  (`dashboard/stomp-client.js`) uses this to subscribe directly to a
+  `pipeline-activity` topic Mule flows publish to, rather than polling.
 
 ## Testing
 
