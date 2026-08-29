@@ -16,6 +16,7 @@
 - Every activity `<jms:publish>` is wrapped in `<try>...<error-handler><on-error-continue type="ANY"/></error-handler></try>`. No exceptions — a broker hiccup on this path must never fail an order.
 - No changes to `activemq/broker.xml` or `docker-compose.yml`. The existing plain `stomp` acceptor and the existing `61613:61613` port mapping already support WebSocket clients (verified empirically before this plan was written — see the spec's "Validated premises").
 - No new MUnit coverage. This is a deliberate scope decision in the spec's Testing section, not an oversight — the activity-publish additions are side-effecting and wrapped to never affect a flow's existing tested behavior, and this project's MUnit suites don't execute in this environment regardless (standing limitation, see the original implementation plan's Task 5). Each Mule task's acceptance bar is the project's existing structural bar instead: no `--` inside an XML comment (checked with the project's `check_comments.py` convention) and a clean `mvn clean package -DskipMunitTests`.
+- **Use `~/tools/apache-maven-3.9.6/bin/mvn` for every Mule build/test command, never the system `mvn` (3.6.3, incompatible with `mule-maven-plugin` 4.10.1 — fails with an unrelated Aether `RemoteRepository$Builder.setBlocked` `NoSuchMethodError` that has nothing to do with any code change).** This was already documented in the original implementation plan's Global Constraints; restated here because Task 3 was dispatched without it and hit exactly this failure before the ledger caught it.
 - Browser-side code stays dependency-free — no CDN scripts, no build step, no npm package. This dashboard has none today and this feature doesn't introduce the first one.
 - Every activity event's JSON body has exactly these four fields: `timestamp` (ISO 8601 string, via `now() as String`), `batchId` (string or `null`), `source` (one of `experience-api`, `process-api`, `salesforce-system-api`), `message` (a human-readable string).
 - The browser reconnects 3 seconds after any WebSocket close or error, indefinitely — matching the resilience pattern already used in `services/instrument-simulator/simulator.py` for the same broker.
@@ -428,7 +429,7 @@ step only matters if a future edit adds a new comment)
 
 - [ ] **Step 4: Verify the build**
 
-Run: `cd mule-app && mvn clean package -DskipMunitTests`
+Run: `cd mule-app && ~/tools/apache-maven-3.9.6/bin/mvn clean package -DskipMunitTests` (native Maven — see Global Constraints; the system `mvn` fails on an unrelated Aether incompatibility)
 Expected: `BUILD SUCCESS`
 
 - [ ] **Step 5: Commit**
@@ -577,7 +578,7 @@ Expected: `clean`
 
 - [ ] **Step 5: Verify the build**
 
-Run: `cd mule-app && mvn clean package -DskipMunitTests`
+Run: `cd mule-app && ~/tools/apache-maven-3.9.6/bin/mvn clean package -DskipMunitTests` (native Maven — see Global Constraints; the system `mvn` fails on an unrelated Aether incompatibility)
 Expected: `BUILD SUCCESS`
 
 - [ ] **Step 6: Commit**
@@ -669,7 +670,7 @@ Expected: `clean`
 
 - [ ] **Step 4: Verify the build**
 
-Run: `cd mule-app && mvn clean package -DskipMunitTests`
+Run: `cd mule-app && ~/tools/apache-maven-3.9.6/bin/mvn clean package -DskipMunitTests` (native Maven — see Global Constraints; the system `mvn` fails on an unrelated Aether incompatibility)
 Expected: `BUILD SUCCESS`
 
 - [ ] **Step 5: Commit**
@@ -832,7 +833,7 @@ Expected: `clean`
 
 - [ ] **Step 5: Verify the build**
 
-Run: `cd mule-app && mvn clean package -DskipMunitTests`
+Run: `cd mule-app && ~/tools/apache-maven-3.9.6/bin/mvn clean package -DskipMunitTests` (native Maven — see Global Constraints; the system `mvn` fails on an unrelated Aether incompatibility)
 Expected: `BUILD SUCCESS`
 
 - [ ] **Step 6: Commit**
