@@ -34,7 +34,9 @@
                 </jms:message>
             </jms:publish>
             <error-handler>
-                <on-error-continue type="ANY"/>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                </on-error-continue>
             </error-handler>
         </try>
 
@@ -67,7 +69,9 @@ var result = vars.feasibilityResult
                         </jms:message>
                     </jms:publish>
                     <error-handler>
-                        <on-error-continue type="ANY"/>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                        </on-error-continue>
                     </error-handler>
                 </try>
                 <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
@@ -88,7 +92,9 @@ var result = vars.feasibilityResult
                         </jms:message>
                     </jms:publish>
                     <error-handler>
-                        <on-error-continue type="ANY"/>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                        </on-error-continue>
                     </error-handler>
                 </try>
 
@@ -179,7 +185,9 @@ output application/json
                 </jms:message>
             </jms:publish>
             <error-handler>
-                <on-error-continue type="ANY"/>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                </on-error-continue>
             </error-handler>
         </try>
 
@@ -222,7 +230,9 @@ var safeBatchId = (vars.telemetry.batchId replace "\\" with "\\\\") replace "&ap
                 </jms:message>
             </jms:publish>
             <error-handler>
-                <on-error-continue type="ANY"/>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                </on-error-continue>
             </error-handler>
         </try>
 
@@ -305,7 +315,9 @@ else (vars.telemetry.event == "running")
                                 </jms:message>
                             </jms:publish>
                             <error-handler>
-                                <on-error-continue type="ANY"/>
+                                <on-error-continue type="ANY">
+                                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                                </on-error-continue>
                             </error-handler>
                         </try>
                         <set-payload value='#[%dw 2.0

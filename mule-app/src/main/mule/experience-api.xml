@@ -63,7 +63,9 @@
                         </jms:message>
                     </jms:publish>
                     <error-handler>
-                        <on-error-continue type="ANY"/>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                        </on-error-continue>
                     </error-handler>
                 </try>
                 <http:request config-ref="Process_API_Request_Config" method="POST" path="/orders">
