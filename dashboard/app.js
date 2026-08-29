@@ -1,6 +1,12 @@
 const EXPERIENCE_API_BASE = 'http://localhost:8081';
 const MAX_EVENTS = 50;
 
+const ACTIVITY_STREAM_URL = 'ws://localhost:61613/stomp';
+const ACTIVITY_STREAM_LOGIN = 'admin';
+const ACTIVITY_STREAM_PASSCODE = 'admin';
+const ACTIVITY_STREAM_DESTINATION = 'pipeline-activity';
+const RECONNECT_DELAY_MS = 3000;
+
 const STAGES = [
   { key: 'feasibility', label: 'Feasibility' },
   { key: 'synthesis', label: 'Synthesis' },
@@ -117,11 +123,20 @@ function describeTransition(prevOrder, currOrder) {
   return events;
 }
 
+// Turns one activity event published by a Mule flow into the same
+// {time, text} shape describeTransition/renderEventLog already use, with
+// a `live` flag so renderEventLog can style it distinctly from a
+// poll-diff-derived entry.
+function describeActivityEvent(event) {
+  const time = new Date(event.timestamp).toLocaleTimeString();
+  return { time, text: `[${event.source}] ${event.message}`, live: true };
+}
+
 function renderEventLog(entries) {
   if (entries.length === 0) {
     return '<li class="event-empty">No activity yet.</li>';
   }
-  return entries.map((e) => `<li><span class="event-time">${e.time}</span> ${e.text}</li>`).join('');
+  return entries.map((e) => `<li class="${e.live ? 'event-live' : ''}"><span class="event-time">${e.time}</span> ${e.text}</li>`).join('');
 }
 
 function formatOrderCard(order, feasibilityDetail) {
@@ -229,6 +244,43 @@ async function submitOrder(event) {
   }
 }
 
+// Connects to the broker directly from the browser and merges live
+// backend-activity events into the same eventLog the poll-diff events
+// already populate. Not unit tested -- it drives a real WebSocket, which
+// this environment has no headless browser to exercise; verified by hand
+// against a live stack instead (see the plan's Task 7).
+function connectActivityStream() {
+  const ws = new WebSocket(ACTIVITY_STREAM_URL);
+
+  ws.addEventListener('open', () => {
+    ws.send(buildConnectFrame({ login: ACTIVITY_STREAM_LOGIN, passcode: ACTIVITY_STREAM_PASSCODE }));
+  });
+
+  ws.addEventListener('message', async (event) => {
+    const raw = event.data instanceof Blob ? await event.data.text() : event.data;
+    const frame = parseFrame(raw);
+    if (frame.command === 'CONNECTED') {
+      ws.send(buildSubscribeFrame({ destination: ACTIVITY_STREAM_DESTINATION, id: 'dashboard-activity' }));
+    } else if (frame.command === 'MESSAGE') {
+      try {
+        const activityEvent = JSON.parse(frame.body);
+        eventLog = [describeActivityEvent(activityEvent), ...eventLog].slice(0, MAX_EVENTS);
+        document.querySelector('#event-feed-list').innerHTML = renderEventLog(eventLog);
+      } catch (err) {
+        console.error('failed to parse activity event:', err);
+      }
+    }
+  });
+
+  ws.addEventListener('close', () => {
+    setTimeout(connectActivityStream, RECONNECT_DELAY_MS);
+  });
+
+  ws.addEventListener('error', () => {
+    ws.close();
+  });
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
     statusBadgeClass,
@@ -240,9 +292,11 @@ if (typeof module !== 'undefined') {
     describeTransition,
     renderEventLog,
     formatOrderCard,
+    describeActivityEvent,
   };
 } else {
   document.querySelector('#order-form').addEventListener('submit', submitOrder);
   refresh();
   setInterval(refresh, 3000);
+  connectActivityStream();
 }

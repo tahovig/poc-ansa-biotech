@@ -10,6 +10,7 @@ const {
   describeTransition,
   renderEventLog,
   formatOrderCard,
+  describeActivityEvent,
 } = require('../app.js');
 
 test('statusBadgeClass maps At_Risk to a warning class', () => {
@@ -138,4 +139,26 @@ test('formatOrderCard includes the feasibility breakdown when detail is availabl
 test('formatOrderCard omits the feasibility breakdown when no detail is cached', () => {
   const html = formatOrderCard({ name: 'ORD-1', status: 'Feasible', progressPct: null, batchId: 'batch-1' });
   assert.doesNotMatch(html, /feasibility-detail/);
+});
+
+test('describeActivityEvent formats a live backend event with its source tag', () => {
+  const result = describeActivityEvent({
+    timestamp: '2026-08-28T10:00:00.000Z',
+    batchId: 'batch-1',
+    source: 'process-api',
+    message: 'Requesting feasibility score',
+  });
+  assert.match(result.text, /\[process-api\]/);
+  assert.match(result.text, /Requesting feasibility score/);
+  assert.strictEqual(result.live, true);
+});
+
+test('renderEventLog marks live entries with the event-live class', () => {
+  const html = renderEventLog([{ time: '10:00:00 AM', text: '[process-api] test', live: true }]);
+  assert.match(html, /class="event-live"/);
+});
+
+test('renderEventLog does not mark poll-diff entries as live', () => {
+  const html = renderEventLog([{ time: '10:00:00 AM', text: 'ORD-1 shipped' }]);
+  assert.doesNotMatch(html, /event-live/);
 });

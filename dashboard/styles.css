@@ -289,3 +289,5 @@ h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
 }
 
 .event-empty { color: var(--ink-soft); font-style: italic; }
+
+.event-live { border-left: 2px solid var(--blue); padding-left: 0.5rem; }
