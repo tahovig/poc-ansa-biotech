@@ -27,6 +27,17 @@
         <set-variable variableName="orderPayload" value="#[payload]"/>
         <set-variable variableName="batchId" value="#[uuid()]"/>
 
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.batchId, source: "process-api", message: "Requesting feasibility score" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY"/>
+            </error-handler>
+        </try>
+
         <http:request config-ref="Feasibility_System_API_Request_Config" method="POST" path="/feasibility">
             <http:body><![CDATA[#[output application/json --- { sequence: vars.orderPayload.sequence }]]]></http:body>
         </http:request>
@@ -49,6 +60,16 @@ var result = vars.feasibilityResult
     promisedShipDate: order.requestedShipDate,
     batchId: vars.batchId
 }]'/>
+                <try>
+                    <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                        <jms:message>
+                            <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.batchId, source: "process-api", message: "Writing order to Salesforce" }]]]></jms:body>
+                        </jms:message>
+                    </jms:publish>
+                    <error-handler>
+                        <on-error-continue type="ANY"/>
+                    </error-handler>
+                </try>
                 <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
                     <http:body><![CDATA[#[payload]]]></http:body>
                 </http:request>
@@ -59,6 +80,17 @@ var result = vars.feasibilityResult
                         <jms:body><![CDATA[#[output application/json --- { batchId: vars.batchId, orderId: vars.orderId, requestedShipDate: vars.orderPayload.requestedShipDate }]]]></jms:body>
                     </jms:message>
                 </jms:publish>
+
+                <try>
+                    <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                        <jms:message>
+                            <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.batchId, source: "process-api", message: "Queued synthesis job" }]]]></jms:body>
+                        </jms:message>
+                    </jms:publish>
+                    <error-handler>
+                        <on-error-continue type="ANY"/>
+                    </error-handler>
+                </try>
 
                 <set-payload value='#[%dw 2.0
 output application/json
