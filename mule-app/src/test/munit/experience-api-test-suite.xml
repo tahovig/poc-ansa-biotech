@@ -52,6 +52,7 @@
                     <munit-tools:payload value='#[{ orderId: "001XX", batchId: "batch-1", feasible: true, score: 0.9, reasons: [], status: "Feasible" }]' mediaType="application/json"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
+            <munit-tools:mock-when processor="jms:publish"/>
         </munit:behavior>
         <munit:execution>
             <munit:set-event>

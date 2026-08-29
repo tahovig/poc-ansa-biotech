@@ -145,9 +145,12 @@ interesting ones, each documented in place in the source file it affects:
 
 - `services/feasibility`, `services/sfdc-auth`, `services/instrument-simulator`:
   `PYTHONPATH=. python3 -m pytest` in each directory.
-- `dashboard`: `node --test tests/app.test.js`.
+- `dashboard`: `node --test tests/app.test.js tests/stomp-client.test.js`.
 - `mule-app`: MUnit suites exist under `src/test/munit/` but don't execute
   in this environment (see the plan's Task 5 note for the full
   elimination trail); `mvn clean package -DskipMunitTests` is the build's
   acceptance bar instead. The suites are kept in sync with the flows they
-  target so they're still useful reading.
+  target so they're still useful reading. Use a native Maven install (not
+  one bundled with an IDE) — this repo hit
+  `RemoteRepository$Builder.setBlocked: NoSuchMethodError` against a
+  distro-bundled Maven 3.6.3, resolved by using Maven 3.9.6 directly.

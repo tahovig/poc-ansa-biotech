@@ -45,6 +45,7 @@
                     <munit-tools:payload value='#[{ id: "001XX", success: true }]' mediaType="application/java"/>
                 </munit-tools:then-return>
             </munit-tools:mock-when>
+            <munit-tools:mock-when processor="jms:publish"/>
         </munit:behavior>
         <munit:execution>
             <munit:set-event>

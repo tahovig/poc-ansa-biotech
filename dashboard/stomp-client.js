@@ -1,7 +1,7 @@
 const FRAME_TERMINATOR = '\0';
 
 function buildConnectFrame({ login, passcode }) {
-  return `CONNECT\naccept-version:1.2\nhost:/\nlogin:${login}\npasscode:${passcode}\n\n${FRAME_TERMINATOR}`;
+  return `CONNECT\naccept-version:1.2\nhost:/\nlogin:${login}\npasscode:${passcode}\nheart-beat:10000,0\n\n${FRAME_TERMINATOR}`;
 }
 
 function buildSubscribeFrame({ destination, id }) {

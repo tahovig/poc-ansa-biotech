@@ -132,11 +132,15 @@ function describeActivityEvent(event) {
   return { time, text: `[${event.source}] ${event.message}`, live: true };
 }
 
+function escapeHtml(str) {
+  return str.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
 function renderEventLog(entries) {
   if (entries.length === 0) {
     return '<li class="event-empty">No activity yet.</li>';
   }
-  return entries.map((e) => `<li class="${e.live ? 'event-live' : ''}"><span class="event-time">${e.time}</span> ${e.text}</li>`).join('');
+  return entries.map((e) => `<li class="${e.live ? 'event-live' : ''}"><span class="event-time">${e.time}</span> ${escapeHtml(e.text)}</li>`).join('');
 }
 
 function formatOrderCard(order, feasibilityDetail) {
@@ -251,6 +255,7 @@ async function submitOrder(event) {
 // against a live stack instead (see the plan's Task 7).
 function connectActivityStream() {
   const ws = new WebSocket(ACTIVITY_STREAM_URL);
+  let heartbeatTimer = null;
 
   ws.addEventListener('open', () => {
     ws.send(buildConnectFrame({ login: ACTIVITY_STREAM_LOGIN, passcode: ACTIVITY_STREAM_PASSCODE }));
@@ -261,6 +266,7 @@ function connectActivityStream() {
     const frame = parseFrame(raw);
     if (frame.command === 'CONNECTED') {
       ws.send(buildSubscribeFrame({ destination: ACTIVITY_STREAM_DESTINATION, id: 'dashboard-activity' }));
+      heartbeatTimer = setInterval(() => ws.send('\n'), 10000);
     } else if (frame.command === 'MESSAGE') {
       try {
         const activityEvent = JSON.parse(frame.body);
@@ -269,10 +275,14 @@ function connectActivityStream() {
       } catch (err) {
         console.error('failed to parse activity event:', err);
       }
+    } else if (frame.command === 'ERROR') {
+      console.error('STOMP error frame:', frame.headers.message, frame.body);
     }
   });
 
   ws.addEventListener('close', () => {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    console.warn('activity stream disconnected, reconnecting in', RECONNECT_DELAY_MS, 'ms');
     setTimeout(connectActivityStream, RECONNECT_DELAY_MS);
   });
 
@@ -291,6 +301,7 @@ if (typeof module !== 'undefined') {
     renderDeadlineBadge,
     describeTransition,
     renderEventLog,
+    escapeHtml,
     formatOrderCard,
     describeActivityEvent,
   };

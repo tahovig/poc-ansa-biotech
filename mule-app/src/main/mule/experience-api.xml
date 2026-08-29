@@ -64,7 +64,7 @@
                     </jms:publish>
                     <error-handler>
                         <on-error-continue type="ANY">
-                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ error.description]"/>
+                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
                         </on-error-continue>
                     </error-handler>
                 </try>
