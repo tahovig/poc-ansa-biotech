@@ -50,7 +50,7 @@
         </munit:execution>
         <munit:validation>
             <munit-tools:verify-call processor="http:request" withAttributeValue="#[{ attributeName: 'path', whereValue: '/synthesis-orders' }]" times="1"/>
-            <munit-tools:verify-call processor="jms:publish" times="1"/>
+            <munit-tools:verify-call processor="jms:publish" withAttributeValue="#[{ attributeName: 'destination', whereValue: 'synthesis-jobs' }]" times="1"/>
             <munit-tools:assert-that expression="#[payload.feasible]" is="#[MunitTools::equalTo(true)]"/>
         </munit:validation>
     </munit:test>
@@ -82,7 +82,7 @@
             <flow-ref name="process-order-flow"/>
         </munit:execution>
         <munit:validation>
-            <munit-tools:verify-call processor="jms:publish" times="0"/>
+            <munit-tools:verify-call processor="jms:publish" withAttributeValue="#[{ attributeName: 'destination', whereValue: 'synthesis-jobs' }]" times="0"/>
             <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('Rejected')]"/>
         </munit:validation>
     </munit:test>

@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mule xmlns="http://www.mulesoft.org/schema/mule/core"
       xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:jms="http://www.mulesoft.org/schema/mule/jms"
       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:schemaLocation="
         http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
-        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/jms http://www.mulesoft.org/schema/mule/jms/current/mule-jms.xsd">
 
     <!--
       Token fetch is one plain http:request to the sfdc-auth service (see
@@ -69,6 +71,19 @@ output application/json
 
         <http:request config-ref="SFDC_Auth_Request_Config" method="GET" path="/token"/>
         <set-variable variableName="accessToken" value="#[payload.access_token]"/>
+
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.recordPayload.Batch_Id__c, source: "salesforce-system-api", message: "Salesforce: creating Synthesis_Order__c record" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
 
         <http:request config-ref="SFDC_Request_Config" method="POST" path="/services/data/v60.0/sobjects/Synthesis_Order__c">
             <http:body><![CDATA[#[output application/json --- vars.recordPayload]]]></http:body>

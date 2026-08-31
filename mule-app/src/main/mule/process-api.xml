@@ -27,6 +27,19 @@
         <set-variable variableName="orderPayload" value="#[payload]"/>
         <set-variable variableName="batchId" value="#[uuid()]"/>
 
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.batchId, source: "process-api", message: "Requesting feasibility score" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
         <http:request config-ref="Feasibility_System_API_Request_Config" method="POST" path="/feasibility">
             <http:body><![CDATA[#[output application/json --- { sequence: vars.orderPayload.sequence }]]]></http:body>
         </http:request>
@@ -49,6 +62,18 @@ var result = vars.feasibilityResult
     promisedShipDate: order.requestedShipDate,
     batchId: vars.batchId
 }]'/>
+                <try>
+                    <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                        <jms:message>
+                            <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.batchId, source: "process-api", message: "Writing order to Salesforce" }]]]></jms:body>
+                        </jms:message>
+                    </jms:publish>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
                 <http:request config-ref="SF_System_API_Request_Config" method="POST" path="/synthesis-orders">
                     <http:body><![CDATA[#[payload]]]></http:body>
                 </http:request>
@@ -59,6 +84,19 @@ var result = vars.feasibilityResult
                         <jms:body><![CDATA[#[output application/json --- { batchId: vars.batchId, orderId: vars.orderId, requestedShipDate: vars.orderPayload.requestedShipDate }]]]></jms:body>
                     </jms:message>
                 </jms:publish>
+
+                <try>
+                    <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                        <jms:message>
+                            <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.batchId, source: "process-api", message: "Queued synthesis job" }]]]></jms:body>
+                        </jms:message>
+                    </jms:publish>
+                    <error-handler>
+                        <on-error-continue type="ANY">
+                            <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                        </on-error-continue>
+                    </error-handler>
+                </try>
 
                 <set-payload value='#[%dw 2.0
 output application/json
@@ -140,6 +178,19 @@ output application/json
         -->
         <set-variable variableName="telemetry" value="#[read(payload, 'application/json')]"/>
 
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.telemetry.batchId, source: "process-api", message: "Received instrument telemetry: " ++ vars.telemetry.event ++ " (" ++ (vars.telemetry.progressPct as String) ++ "%)" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
+
         <!--
           This used to call back into this app's own SF System API
           (GET/PATCH SF_System_API_Request_Config's "/synthesis-orders/
@@ -171,6 +222,19 @@ output text/plain
 var safeBatchId = (vars.telemetry.batchId replace "\\" with "\\\\") replace "&apos;" with "\\&apos;"
 ---
 "SELECT Id, Status__c, Promised_Ship_Date__c FROM Synthesis_Order__c WHERE Batch_Id__c = &apos;" ++ safeBatchId ++ "&apos;"]'/>
+
+        <try>
+            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                <jms:message>
+                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.telemetry.batchId, source: "process-api", message: "Salesforce: looking up order by batch" }]]]></jms:body>
+                </jms:message>
+            </jms:publish>
+            <error-handler>
+                <on-error-continue type="ANY">
+                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                </on-error-continue>
+            </error-handler>
+        </try>
 
         <http:request config-ref="SFDC_Request_Config" method="GET" path="/services/data/v60.0/query">
             <http:headers><![CDATA[#[{ 'Authorization': 'Bearer ' ++ vars.accessToken }]]]></http:headers>
@@ -244,6 +308,18 @@ else (vars.telemetry.event == "running")
     and ((now() as Date) &gt;= ((promisedShipDate as Date) - |P3D|))]'/>
                         <set-variable variableName="finalStatus"
                             value="#[if (vars.projectedLate) 'At_Risk' else vars.candidateStatus]"/>
+                        <try>
+                            <jms:publish config-ref="JMS_Config" destination="pipeline-activity" destinationType="TOPIC">
+                                <jms:message>
+                                    <jms:body><![CDATA[#[output application/json --- { timestamp: now() as String, batchId: vars.telemetry.batchId, source: "process-api", message: "Salesforce: updating order status to " ++ vars.finalStatus }]]]></jms:body>
+                                </jms:message>
+                            </jms:publish>
+                            <error-handler>
+                                <on-error-continue type="ANY">
+                                    <logger level="WARN" message="#['pipeline-activity publish failed: ' ++ (error.description default 'no description')]"/>
+                                </on-error-continue>
+                            </error-handler>
+                        </try>
                         <set-payload value='#[%dw 2.0
 output application/json
 ---
