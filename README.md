@@ -104,7 +104,8 @@ docker compose -f docker-compose.pull.yml up
 ```
 
 Images are published to `ghcr.io/tahovig/poc-ansa-biotech/*` on every push
-to `main` (see `.github/workflows/publish-images.yml`).
+to `main` (see `.github/workflows/publish-images.yml`); browse them at
+https://github.com/tahovig?tab=packages.
 
 ## Architecture
 
