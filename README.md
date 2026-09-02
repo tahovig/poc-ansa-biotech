@@ -91,6 +91,21 @@ Starting from a blank machine, in order:
    the next 3 days — the projection only fires once the promised date is
    that close and progress is still under 50%.
 
+### Quick demo (pull pre-built images)
+
+Steps 1-5 above (Salesforce org setup, Connected App, JWT keypair, `.env`,
+object model deploy) are still required — this just skips building
+`mule-app` and the Python services from source, so no Maven/Java/Python
+toolchain is needed locally, only Docker:
+
+```bash
+docker compose -f docker-compose.pull.yml pull
+docker compose -f docker-compose.pull.yml up
+```
+
+Images are published to `ghcr.io/tahovig/poc-ansa-biotech/*` on every push
+to `main` (see `.github/workflows/publish-images.yml`).
+
 ## Architecture
 
 See `docs/superpowers/specs/2026-08-24-ansa-poc-design.md`.
