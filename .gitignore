@@ -1,4 +1,5 @@
 .env
+*.crt
 keys/
 *.log
 target/
